@@ -1,11 +1,13 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronLeft, ChevronRight, Download, Film, Mic2, MonitorPlay, Search, Tv } from 'lucide-react'
+import { Download, Film, Mic2, MonitorPlay, Search, Tv } from 'lucide-react'
 import { libraryApi, fileRequestsApi } from '../api/client'
 import type { MediaItem, MediaType } from '../api/types'
 import { Badge } from '../components/Badge'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
+import { Paginator } from '../components/Paginator'
+import { formatBytes } from '../utils/formatBytes'
 
 const PAGE_SIZE = 100
 
@@ -33,12 +35,6 @@ const TABS: { label: string; value: MediaType | 'All' }[] = [
   { label: 'Music', value: 'Music' },
   { label: 'Other', value: 'Other' },
 ]
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`
-}
 
 function MediaCard({ item, onRequest }: { item: MediaItem; onRequest: (item: MediaItem) => void }) {
   return (
@@ -78,13 +74,15 @@ export function Library() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [activeTab, setActiveTab] = useState<MediaType | 'All'>('All')
   const [page, setPage] = useState(1)
+  const [requestError, setRequestError] = useState<string | null>(null)
   const queryClient = useQueryClient()
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   function handleSearch(value: string) {
     setSearch(value)
     setPage(1)
-    clearTimeout((window as any)._searchTimer)
-    ;(window as any)._searchTimer = setTimeout(() => setDebouncedSearch(value), 300)
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    searchTimerRef.current = setTimeout(() => setDebouncedSearch(value), 300)
   }
 
   function handleTab(tab: MediaType | 'All') {
@@ -108,10 +106,11 @@ export function Library() {
   const requestMutation = useMutation({
     mutationFn: (item: MediaItem) => fileRequestsApi.create(item.jellyfinItemId, item.serverId),
     onSuccess: () => {
+      setRequestError(null)
       queryClient.invalidateQueries({ queryKey: ['requests'] })
     },
     onError: (err) => {
-      alert(err instanceof Error ? err.message : 'Request failed')
+      setRequestError(err instanceof Error ? err.message : 'Request failed')
     },
   })
 
@@ -182,6 +181,13 @@ export function Library() {
         </div>
       )}
 
+      {requestError && (
+        <div className="mb-4 px-4 py-3 rounded-lg bg-red-950/40 border border-red-900/40 text-sm text-red-400 flex items-center justify-between">
+          <span>{requestError}</span>
+          <button onClick={() => setRequestError(null)} className="text-red-400 hover:text-red-300 ml-4 cursor-pointer">×</button>
+        </div>
+      )}
+
       {error && (
         <Card className="text-center py-10">
           <p className="text-[var(--color-danger)]">Failed to load library. Is the federation server reachable?</p>
@@ -214,50 +220,7 @@ export function Library() {
             ))}
           </div>
 
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between pt-2">
-              <span className="text-xs text-[var(--color-text)]">
-                Page {page} of {totalPages} · {totalForTab} items
-              </span>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                  className="p-1.5 rounded-lg text-[var(--color-text)] hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                >
-                  <ChevronLeft size={16} />
-                </button>
-                {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
-                  const p = totalPages <= 7
-                    ? i + 1
-                    : page <= 4 ? i + 1
-                    : page >= totalPages - 3 ? totalPages - 6 + i
-                    : page - 3 + i
-                  return (
-                    <button
-                      key={p}
-                      onClick={() => setPage(p)}
-                      className={`min-w-[2rem] h-8 px-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-                        p === page
-                          ? 'bg-[var(--color-accent-dim)] text-[var(--color-accent)]'
-                          : 'text-[var(--color-text)] hover:bg-white/5'
-                      }`}
-                    >
-                      {p}
-                    </button>
-                  )
-                })}
-                <button
-                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                  className="p-1.5 rounded-lg text-[var(--color-text)] hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                >
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            </div>
-          )}
+          <Paginator page={page} totalPages={totalPages} totalItems={totalForTab} onPageChange={setPage} />
         </>
       )}
     </div>

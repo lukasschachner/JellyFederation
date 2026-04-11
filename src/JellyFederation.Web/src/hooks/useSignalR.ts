@@ -1,6 +1,6 @@
 import * as signalR from '@microsoft/signalr'
 import { useEffect, useRef, useState } from 'react'
-import { loadConfig } from '../lib/config'
+import { useConfig } from './useConfig'
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
 
@@ -24,9 +24,15 @@ interface UseSignalROptions {
 export function useSignalR({ onFileRequestUpdate, onTransferProgress }: UseSignalROptions = {}) {
   const [state, setState] = useState<ConnectionState>('disconnected')
   const connRef = useRef<signalR.HubConnection | null>(null)
+  const cfg = useConfig()
+
+  const onFileRequestUpdateRef = useRef(onFileRequestUpdate)
+  const onTransferProgressRef = useRef(onTransferProgress)
+
+  useEffect(() => { onFileRequestUpdateRef.current = onFileRequestUpdate }, [onFileRequestUpdate])
+  useEffect(() => { onTransferProgressRef.current = onTransferProgress }, [onTransferProgress])
 
   useEffect(() => {
-    const cfg = loadConfig()
     if (!cfg?.serverUrl || !cfg?.apiKey) return
 
     const conn = new signalR.HubConnectionBuilder()
@@ -40,11 +46,11 @@ export function useSignalR({ onFileRequestUpdate, onTransferProgress }: UseSigna
     conn.onclose(() => setState('disconnected'))
 
     conn.on('FileRequestStatusUpdate', (update: FileRequestUpdate) => {
-      onFileRequestUpdate?.(update)
+      onFileRequestUpdateRef.current?.(update)
     })
 
     conn.on('TransferProgress', (progress: TransferProgress) => {
-      onTransferProgress?.(progress)
+      onTransferProgressRef.current?.(progress)
     })
 
     setState('connecting')
@@ -54,7 +60,7 @@ export function useSignalR({ onFileRequestUpdate, onTransferProgress }: UseSigna
 
     connRef.current = conn
     return () => { conn.stop() }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [cfg?.serverUrl, cfg?.apiKey])
 
   return { state }
 }

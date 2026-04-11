@@ -1,18 +1,18 @@
 import { useState } from 'react'
 import { LogOut, Server } from 'lucide-react'
-import { loadConfig, saveConfig, clearConfig } from '../lib/config'
+import { saveConfig, clearConfig } from '../lib/config'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { Input } from '../components/Input'
+import { useConfig } from '../hooks/useConfig'
 
 interface SettingsProps {
   onLogout: () => void
 }
 
 export function Settings({ onLogout }: SettingsProps) {
-  const cfg = loadConfig()
+  const cfg = useConfig()
   const [serverName, setServerName] = useState(cfg?.serverName ?? '')
-  const [_downloadDir, _setDownloadDir] = useState('')
   const [saved, setSaved] = useState(false)
 
   function handleSave(e: React.FormEvent) {

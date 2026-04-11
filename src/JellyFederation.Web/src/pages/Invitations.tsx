@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Mail, Plus, Send, Trash2, X } from 'lucide-react'
 import { invitationsApi } from '../api/client'
-import { loadConfig } from '../lib/config'
 import type { Invitation } from '../api/types'
+import { useConfig } from '../hooks/useConfig'
 import { Badge } from '../components/Badge'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
@@ -24,7 +24,7 @@ function formatDate(iso: string) {
 }
 
 export function Invitations() {
-  const cfg = loadConfig()
+  const cfg = useConfig()
   const qc = useQueryClient()
   const [newServerId, setNewServerId] = useState('')
   const [sendError, setSendError] = useState('')
