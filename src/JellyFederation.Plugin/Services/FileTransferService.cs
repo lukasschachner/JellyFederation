@@ -146,16 +146,20 @@ public class FileTransferService(
         using var transferCts = new CancellationTokenSource();
         _activeCts[fileRequestId] = transferCts;
 
+        using var timeoutCts = new CancellationTokenSource();
+
         try
         {
             while (true)
             {
-                using var cts = CancellationTokenSource.CreateLinkedTokenSource(
-                    transferCts.Token, new CancellationTokenSource(30_000).Token);
+                // Reset the timeout for each packet instead of allocating a new CTS
+                timeoutCts.CancelAfter(30_000);
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    transferCts.Token, timeoutCts.Token);
                 int received;
                 try
                 {
-                    received = await socket.ReceiveAsync(recvBuffer, SocketFlags.None, cts.Token);
+                    received = await socket.ReceiveAsync(recvBuffer, SocketFlags.None, linkedCts.Token);
                 }
                 catch (OperationCanceledException) when (transferCts.IsCancellationRequested)
                 {

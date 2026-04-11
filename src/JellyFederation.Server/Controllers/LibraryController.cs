@@ -22,30 +22,49 @@ public class LibraryController(FederationDbContext db) : ControllerBase
         var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
         if (server is null) return Unauthorized();
 
-        // Keep existing requestable flags indexed by JellyfinItemId
+        // Differential sync: update changed items, add new ones, remove stale ones
         var existing = await db.MediaItems
             .Where(m => m.ServerId == server.Id)
             .ToDictionaryAsync(m => m.JellyfinItemId);
 
-        db.MediaItems.RemoveRange(existing.Values);
+        var incomingIds = new HashSet<string>(request.Items.Count);
 
-        var newItems = request.Items.Select(item => new MediaItem
+        foreach (var item in request.Items)
         {
-            ServerId = server.Id,
-            JellyfinItemId = item.JellyfinItemId,
-            Title = item.Title,
-            Type = item.Type,
-            Year = item.Year,
-            Overview = item.Overview,
-            ImageUrl = item.ImageUrl,
-            FileSizeBytes = item.FileSizeBytes,
-            // Preserve requestable flag if item was already known, default true for new items
-            IsRequestable = existing.TryGetValue(item.JellyfinItemId, out var prev)
-                ? prev.IsRequestable
-                : true
-        });
+            incomingIds.Add(item.JellyfinItemId);
 
-        db.MediaItems.AddRange(newItems);
+            if (existing.TryGetValue(item.JellyfinItemId, out var dbItem))
+            {
+                // Update changed metadata fields, preserve IsRequestable
+                dbItem.Title = item.Title;
+                dbItem.Type = item.Type;
+                dbItem.Year = item.Year;
+                dbItem.Overview = item.Overview;
+                dbItem.ImageUrl = item.ImageUrl;
+                dbItem.FileSizeBytes = item.FileSizeBytes;
+            }
+            else
+            {
+                // New item
+                db.MediaItems.Add(new MediaItem
+                {
+                    ServerId = server.Id,
+                    JellyfinItemId = item.JellyfinItemId,
+                    Title = item.Title,
+                    Type = item.Type,
+                    Year = item.Year,
+                    Overview = item.Overview,
+                    ImageUrl = item.ImageUrl,
+                    FileSizeBytes = item.FileSizeBytes,
+                    IsRequestable = true
+                });
+            }
+        }
+
+        // Remove items that no longer exist in Jellyfin
+        var staleItems = existing.Values.Where(m => !incomingIds.Contains(m.JellyfinItemId));
+        db.MediaItems.RemoveRange(staleItems);
+
         await db.SaveChangesAsync();
 
         return Ok();

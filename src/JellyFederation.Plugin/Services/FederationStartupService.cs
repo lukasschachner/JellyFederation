@@ -43,12 +43,6 @@ public class FederationStartupService(
 
         while (!ct.IsCancellationRequested)
         {
-            if (signalR.IsConnected)
-            {
-                await Task.Delay(TimeSpan.FromSeconds(5), ct);
-                continue;
-            }
-
             var config = FederationPlugin.Instance?.Configuration;
             if (config is null) return;
 
@@ -56,8 +50,8 @@ public class FederationStartupService(
             {
                 await signalR.StartAsync(config, ct);
                 await librarySync.SyncAsync(config, ct);
-                attempt = 0; // reset backoff on success
                 logger.LogInformation("Federation plugin connected successfully");
+                break; // connected — exit the retry loop
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {

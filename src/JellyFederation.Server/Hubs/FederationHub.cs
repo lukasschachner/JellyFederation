@@ -67,7 +67,7 @@ public class FederationHub(
     private async Task ResendPendingNotificationsAsync(RegisteredServer server)
     {
         var pending = await db.FileRequests
-            .Where(r => r.Status == FileRequestStatus.Pending &&
+            .Where(r => (r.Status == FileRequestStatus.Pending || r.Status == FileRequestStatus.HolePunching) &&
                         (r.OwningServerId == server.Id || r.RequestingServerId == server.Id))
             .ToListAsync();
 
