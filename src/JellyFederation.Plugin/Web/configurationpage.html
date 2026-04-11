@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>JellyFederation</title>
+</head>
+<body>
+    <div id="JellyFederationConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
+         data-require="emby-input,emby-button,emby-select,emby-checkbox">
+        <div data-role="content">
+            <div class="content-primary">
+                <form id="JellyFederationConfigForm">
+
+                    <div class="sectionTitleContainer flex align-items-center">
+                        <h2 class="sectionTitle">JellyFederation Settings</h2>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="federationServerUrl">
+                            Federation Server URL
+                        </label>
+                        <input id="federationServerUrl" name="FederationServerUrl"
+                               type="url" is="emby-input"
+                               placeholder="https://federation.example.com" />
+                        <div class="fieldDescription">
+                            The URL of your JellyFederation server.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="serverId">
+                            Server ID
+                        </label>
+                        <input id="serverId" name="ServerId"
+                               type="text" is="emby-input"
+                               placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+                        <div class="fieldDescription">
+                            Your server's ID from the federation registration.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="apiKey">
+                            API Key
+                        </label>
+                        <input id="apiKey" name="ApiKey"
+                               type="text" is="emby-input"
+                               placeholder="Your federation API key"
+                               style="font-family: monospace; letter-spacing: 0.1em;" />
+                        <div class="fieldDescription">
+                            The API key issued when you registered this server.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="serverName">
+                            Server Name
+                        </label>
+                        <input id="serverName" name="ServerName"
+                               type="text" is="emby-input"
+                               placeholder="My Jellyfin Server" />
+                        <div class="fieldDescription">
+                            Display name shown to other federation members.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="downloadDirectory">
+                            Download Directory
+                        </label>
+                        <input id="downloadDirectory" name="DownloadDirectory"
+                               type="text" is="emby-input"
+                               placeholder="/data/newmedia/federation" />
+                        <div class="fieldDescription">
+                            Local path where received files will be saved. Must be a directory Jellyfin can scan.
+                        </div>
+                    </div>
+
+                    <div>
+                        <button is="emby-button" type="submit" class="raised button-submit block">
+                            <span>Save</span>
+                        </button>
+                    </div>
+
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        var JellyFederationConfig = {
+            pluginId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+
+            loadConfig: function () {
+                Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(this.pluginId).then(function (config) {
+                    config = config || {};
+                    document.querySelector('#federationServerUrl').value = config.FederationServerUrl || '';
+                    document.querySelector('#serverId').value = config.ServerId || '';
+                    document.querySelector('#apiKey').value = config.ApiKey || '';
+                    document.querySelector('#serverName').value = config.ServerName || '';
+                    document.querySelector('#downloadDirectory').value = config.DownloadDirectory || '';
+                    Dashboard.hideLoadingMsg();
+                }).catch(function (err) {
+                    console.error('[JellyFederation] Failed to load config:', err);
+                    Dashboard.hideLoadingMsg();
+                });
+            },
+
+            saveConfig: function (form) {
+                var self = this;
+                Dashboard.showLoadingMsg();
+
+                function escXml(s) {
+                    return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                }
+
+                var xml = '<?xml version="1.0" encoding="utf-8"?>'
+                    + '<PluginConfiguration'
+                    + ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
+                    + ' xmlns:xsd="http://www.w3.org/2001/XMLSchema">'
+                    + '<FederationServerUrl>' + escXml(form.querySelector('#federationServerUrl').value.trim()) + '</FederationServerUrl>'
+                    + '<ServerId>' + escXml(form.querySelector('#serverId').value.trim()) + '</ServerId>'
+                    + '<ApiKey>' + escXml(form.querySelector('#apiKey').value.trim()) + '</ApiKey>'
+                    + '<ServerName>' + escXml(form.querySelector('#serverName').value.trim()) + '</ServerName>'
+                    + '<DownloadDirectory>' + escXml(form.querySelector('#downloadDirectory').value.trim()) + '</DownloadDirectory>'
+                    + '</PluginConfiguration>';
+
+                ApiClient.ajax({
+                    type: 'POST',
+                    url: ApiClient.getUrl('Plugins/' + self.pluginId + '/Configuration'),
+                    data: xml,
+                    contentType: 'application/xml'
+                }).then(function () {
+                    Dashboard.processPluginConfigurationUpdateResult();
+                }).catch(function (err) {
+                    var msg = err && (err.message || JSON.stringify(err)) || 'Unknown error';
+                    console.error('[JellyFederation] Failed to save config:', err);
+                    Dashboard.hideLoadingMsg();
+                    alert('JellyFederation: Save failed — ' + msg);
+                });
+            }
+        };
+
+        document.querySelector('#JellyFederationConfigPage').addEventListener('pageshow', function () {
+            JellyFederationConfig.loadConfig();
+        });
+
+        document.querySelector('#JellyFederationConfigForm').addEventListener('submit', function (e) {
+            e.preventDefault();
+            JellyFederationConfig.saveConfig(this);
+            return false;
+        });
+    </script>
+</body>
+</html>

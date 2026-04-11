@@ -1,0 +1,16 @@
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+
+COPY src/JellyFederation.Shared/JellyFederation.Shared.csproj src/JellyFederation.Shared/
+COPY src/JellyFederation.Server/JellyFederation.Server.csproj src/JellyFederation.Server/
+RUN dotnet restore src/JellyFederation.Server/JellyFederation.Server.csproj
+
+COPY src/JellyFederation.Shared/ src/JellyFederation.Shared/
+COPY src/JellyFederation.Server/ src/JellyFederation.Server/
+RUN dotnet publish src/JellyFederation.Server/JellyFederation.Server.csproj \
+    -c Release -o /app/publish --no-restore
+
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
+WORKDIR /app
+COPY --from=build /app/publish .
+ENTRYPOINT ["dotnet", "JellyFederation.Server.dll"]

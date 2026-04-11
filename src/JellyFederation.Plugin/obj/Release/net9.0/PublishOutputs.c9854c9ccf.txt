@@ -1,0 +1,15 @@
+/tmp/jf-plugin/JellyFederation.Plugin.dll
+/tmp/jf-plugin/JellyFederation.Plugin.pdb
+/tmp/jf-plugin/Microsoft.AspNetCore.Http.Connections.Client.dll
+/tmp/jf-plugin/Microsoft.AspNetCore.SignalR.Client.dll
+/tmp/jf-plugin/Microsoft.AspNetCore.SignalR.Client.Core.dll
+/tmp/jf-plugin/Microsoft.Extensions.DependencyInjection.dll
+/tmp/jf-plugin/Microsoft.Extensions.DependencyInjection.Abstractions.dll
+/tmp/jf-plugin/Microsoft.Extensions.Logging.dll
+/tmp/jf-plugin/Microsoft.Extensions.Logging.Abstractions.dll
+/tmp/jf-plugin/Microsoft.Extensions.Options.dll
+/tmp/jf-plugin/Microsoft.Extensions.Primitives.dll
+/tmp/jf-plugin/System.Net.ServerSentEvents.dll
+/tmp/jf-plugin/JellyFederation.Shared.dll
+/tmp/jf-plugin/JellyFederation.Shared.pdb
+/tmp/jf-plugin/JellyFederation.Plugin.deps.json

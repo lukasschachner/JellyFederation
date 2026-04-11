@@ -1,0 +1,15 @@
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/bin/Release/net9.0/JellyFederation.Plugin.deps.json
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/bin/Release/net9.0/JellyFederation.Plugin.dll
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/bin/Release/net9.0/JellyFederation.Plugin.pdb
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/bin/Release/net9.0/JellyFederation.Shared.dll
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/bin/Release/net9.0/JellyFederation.Shared.pdb
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/obj/Release/net9.0/JellyFederation.Plugin.csproj.AssemblyReference.cache
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/obj/Release/net9.0/JellyFederation.Plugin.GeneratedMSBuildEditorConfig.editorconfig
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/obj/Release/net9.0/JellyFederation.Plugin.AssemblyInfoInputs.cache
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/obj/Release/net9.0/JellyFederation.Plugin.AssemblyInfo.cs
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/obj/Release/net9.0/JellyFederation.Plugin.csproj.CoreCompileInputs.cache
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/obj/Release/net9.0/JellyFed.6D60CC4A.Up2Date
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/obj/Release/net9.0/JellyFederation.Plugin.dll
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/obj/Release/net9.0/refint/JellyFederation.Plugin.dll
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/obj/Release/net9.0/JellyFederation.Plugin.pdb
+/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/obj/Release/net9.0/ref/JellyFederation.Plugin.dll

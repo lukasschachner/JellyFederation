@@ -1,0 +1,3 @@
+{"hook_name": "session-start-tldr-cache", "invocations": 1, "successes": 1, "failures": 0, "metrics": {"sessions_started": 1, "cache_warmed": 1}, "timestamp": "2026-04-11T19:58:16.826201+00:00"}
+{"hook_name": "tldr-read-enforcer", "invocations": 3, "successes": 3, "failures": 0, "metrics": {"reads_intercepted": 3, "layers_returned": 9}, "timestamp": "2026-04-11T19:58:16.826201+00:00"}
+{"hook_name": "smart-search-router", "invocations": 1, "successes": 1, "failures": 0, "metrics": {"queries_routed": 1, "semantic_queries": 1}, "timestamp": "2026-04-11T19:58:16.826201+00:00"}

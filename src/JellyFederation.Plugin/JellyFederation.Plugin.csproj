@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Compile-time only — Jellyfin's runtime provides these DLLs -->
+    <PackageReference Include="Jellyfin.Controller" Version="10.11.6">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    <PackageReference Include="Jellyfin.Data" Version="10.11.6">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    <PackageReference Include="Jellyfin.Model" Version="10.11.6">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+    <!-- SignalR client — ship it, but strip its Microsoft.Extensions.* transitive deps below -->
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\JellyFederation.Shared\JellyFederation.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Web\configurationpage.html" />
+  </ItemGroup>
+
+  <!--
+    Remove Microsoft.Extensions.* DLLs from the publish output.
+    Jellyfin already ships these in its AppDomain; duplicating them causes
+    assembly binding conflicts and the plugin gets marked NotSupported.
+  -->
+  <Target Name="StripJellyfinProvidedDlls" AfterTargets="Publish">
+    <ItemGroup>
+      <_ToDelete Include="$(PublishDir)Microsoft.Extensions.*.dll" />
+      <_ToDelete Include="$(PublishDir)Microsoft.Extensions.DependencyInjection.dll" />
+    </ItemGroup>
+    <Delete Files="@(_ToDelete)" />
+    <Message Text="Stripped Jellyfin-provided Microsoft.Extensions DLLs from publish output." Importance="high" />
+  </Target>
+
+</Project>

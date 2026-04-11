@@ -1,0 +1,7 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/JellyFederation.Plugin/JellyFederation.Plugin.csproj" />
+    <Project Path="src/JellyFederation.Server/JellyFederation.Server.csproj" />
+    <Project Path="src/JellyFederation.Shared/JellyFederation.Shared.csproj" />
+  </Folder>
+</Solution>

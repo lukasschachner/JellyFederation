@@ -1,0 +1,15 @@
+services:
+  federation-server:
+    build:
+      context: .
+      dockerfile: src/JellyFederation.Server/Dockerfile
+    ports:
+      - "5000:8080"
+    volumes:
+      - federation-data:/app/data
+    environment:
+      - ConnectionStrings__Default=Data Source=/app/data/federation.db
+    restart: unless-stopped
+
+volumes:
+  federation-data:
