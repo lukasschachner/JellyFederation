@@ -14,16 +14,19 @@ public class FederationSignalRService : IAsyncDisposable
     private readonly ILogger<FederationSignalRService> _logger;
     private readonly HolePunchService _holePunch;
     private readonly LibrarySyncService _librarySync;
+    private readonly IPluginConfigurationProvider _configProvider;
     private HubConnection? _connection;
 
     public FederationSignalRService(
         ILogger<FederationSignalRService> logger,
         HolePunchService holePunch,
-        LibrarySyncService librarySync)
+        LibrarySyncService librarySync,
+        IPluginConfigurationProvider configProvider)
     {
         _logger = logger;
         _holePunch = holePunch;
         _librarySync = librarySync;
+        _configProvider = configProvider;
     }
 
     public bool IsConnected => _connection?.State == HubConnectionState.Connected;
@@ -80,12 +83,12 @@ public class FederationSignalRService : IAsyncDisposable
         _connection.Reconnected += async _ =>
         {
             _logger.LogInformation("SignalR reconnected — re-syncing library");
-            var cfg = FederationPlugin.Instance?.Configuration;
-            if (cfg is not null)
+            try
             {
-                try { await _librarySync.SyncAsync(cfg); }
-                catch (Exception ex) { _logger.LogWarning(ex, "Library re-sync after reconnect failed"); }
+                var cfg = _configProvider.GetConfiguration();
+                await _librarySync.SyncAsync(cfg);
             }
+            catch (Exception ex) { _logger.LogWarning(ex, "Library re-sync after reconnect failed"); }
         };
 
         await _connection.StartAsync(ct);

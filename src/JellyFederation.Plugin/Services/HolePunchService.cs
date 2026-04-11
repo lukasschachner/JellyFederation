@@ -21,7 +21,8 @@ namespace JellyFederation.Plugin.Services;
 /// </summary>
 public class HolePunchService(
     ILogger<HolePunchService> logger,
-    FileTransferService fileTransfer)
+    FileTransferService fileTransfer,
+    IPluginConfigurationProvider configProvider)
 {
     private const int ProbeIntervalMs = 200;
     private const int PunchTimeoutMs = 15_000;
@@ -35,7 +36,7 @@ public class HolePunchService(
         FileRequestNotification notification,
         HubConnection connection)
     {
-        var config = FederationPlugin.Instance!.Configuration;
+        var config = configProvider.GetConfiguration();
 
         // Reuse existing socket if we already prepared for this request (reconnect scenario)
         int localPort;
@@ -127,7 +128,7 @@ public class HolePunchService(
                 new HolePunchResult(request.FileRequestId, true, null));
 
             // Hand off to file transfer
-            var config = FederationPlugin.Instance!.Configuration;
+            var config = configProvider.GetConfiguration();
             if (isSender && jellyfinItemId is not null)
                 await fileTransfer.SendFileAsync(request.FileRequestId, jellyfinItemId, socket, remoteEp, config);
             else if (!isSender)

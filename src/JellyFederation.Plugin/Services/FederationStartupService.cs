@@ -1,7 +1,7 @@
+using JellyFederation.Plugin.Configuration;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-// ReSharper disable once RedundantUsingDirective
 
 namespace JellyFederation.Plugin.Services;
 
@@ -16,6 +16,7 @@ public class FederationStartupService(
     LibrarySyncService librarySync,
     FederationSignalRService signalR,
     ILibraryManager libraryManager,
+    IPluginConfigurationProvider configProvider,
     ILogger<FederationStartupService> logger) : IHostedService
 {
     private readonly SemaphoreSlim _syncLock = new(1, 1);
@@ -23,9 +24,6 @@ public class FederationStartupService(
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        var config = FederationPlugin.Instance?.Configuration;
-        if (config is null) return Task.CompletedTask;
-
         libraryManager.ItemAdded += OnLibraryChanged;
         libraryManager.ItemRemoved += OnLibraryChanged;
         libraryManager.ItemUpdated += OnLibraryChanged;
@@ -43,8 +41,7 @@ public class FederationStartupService(
 
         while (!ct.IsCancellationRequested)
         {
-            var config = FederationPlugin.Instance?.Configuration;
-            if (config is null) return;
+            var config = configProvider.GetConfiguration();
 
             try
             {
@@ -86,9 +83,8 @@ public class FederationStartupService(
             if (!await _syncLock.WaitAsync(0)) return;
             try
             {
-                var config = FederationPlugin.Instance?.Configuration;
-                if (config is not null)
-                    await librarySync.SyncAsync(config);
+                var config = configProvider.GetConfiguration();
+                await librarySync.SyncAsync(config);
             }
             catch (Exception ex)
             {

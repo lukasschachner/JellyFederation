@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj": {}
+    "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj": {}
   },
   "projects": {
-    "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj": {
+    "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj",
+        "projectUniqueName": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj",
         "projectName": "JellyFederation.Plugin",
-        "projectPath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj",
+        "projectPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj",
         "packagesPath": "/home/lukasschachner/.nuget/packages/",
-        "outputPath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Plugin/obj/",
+        "outputPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "/home/lukasschachner/.nuget/NuGet/NuGet.Config"
@@ -26,8 +26,8 @@
           "net9.0": {
             "targetAlias": "net9.0",
             "projectReferences": {
-              "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/JellyFederation.Shared.csproj": {
-                "projectPath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/JellyFederation.Shared.csproj"
+              "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/JellyFederation.Shared.csproj": {
+                "projectPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/JellyFederation.Shared.csproj"
               }
             }
           }
@@ -101,14 +101,14 @@
         }
       }
     },
-    "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/JellyFederation.Shared.csproj": {
+    "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/JellyFederation.Shared.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/JellyFederation.Shared.csproj",
+        "projectUniqueName": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/JellyFederation.Shared.csproj",
         "projectName": "JellyFederation.Shared",
-        "projectPath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/JellyFederation.Shared.csproj",
+        "projectPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/JellyFederation.Shared.csproj",
         "packagesPath": "/home/lukasschachner/.nuget/packages/",
-        "outputPath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/obj/",
+        "outputPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/obj/",
         "projectStyle": "PackageReference",
         "crossTargeting": true,
         "configFilePaths": [

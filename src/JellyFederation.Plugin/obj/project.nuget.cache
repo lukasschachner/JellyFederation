@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "QqpdN7rtzRU=",
+  "dgSpecHash": "XQpR/40iXdY=",
   "success": true,
-  "projectFilePath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj",
+  "projectFilePath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj",
   "expectedPackageFiles": [
     "/home/lukasschachner/.nuget/packages/bitfaster.caching/2.5.4/bitfaster.caching.2.5.4.nupkg.sha512",
     "/home/lukasschachner/.nuget/packages/diacritics/4.0.17/diacritics.4.0.17.nupkg.sha512",

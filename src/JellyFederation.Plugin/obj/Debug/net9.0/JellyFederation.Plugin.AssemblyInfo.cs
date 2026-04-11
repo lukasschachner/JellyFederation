@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("JellyFederation.Plugin")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+45adfd7b5a4319d5931de53957db18739509b423")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+c24954cf5002276cb2bfa554fd5c36af303f8359")]
 [assembly: System.Reflection.AssemblyProductAttribute("JellyFederation.Plugin")]
 [assembly: System.Reflection.AssemblyTitleAttribute("JellyFederation.Plugin")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

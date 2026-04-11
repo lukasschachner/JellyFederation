@@ -6,7 +6,7 @@ using MediaBrowser.Model.Serialization;
 
 namespace JellyFederation.Plugin;
 
-public class FederationPlugin : BasePlugin<PluginConfiguration>, IHasWebPages
+public class FederationPlugin : BasePlugin<PluginConfiguration>, IHasWebPages, IPluginConfigurationProvider
 {
     public const string PluginName = "JellyFederation";
     public static readonly Guid PluginGuid = new("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
@@ -18,6 +18,9 @@ public class FederationPlugin : BasePlugin<PluginConfiguration>, IHasWebPages
     }
 
     public static FederationPlugin? Instance { get; private set; }
+
+    /// <inheritdoc />
+    PluginConfiguration IPluginConfigurationProvider.GetConfiguration() => Configuration;
 
     public override string Name => PluginName;
     public override Guid Id => PluginGuid;

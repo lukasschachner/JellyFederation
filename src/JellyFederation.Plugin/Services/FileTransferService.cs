@@ -30,6 +30,7 @@ public class FileTransferService(
     ILibraryManager libraryManager,
     ILibraryMonitor libraryMonitor,
     HttpClient http,
+    IPluginConfigurationProvider configProvider,
     ILogger<FileTransferService> logger)
 {
     private const int ChunkSize = 32 * 1024; // 32 KB
@@ -38,7 +39,7 @@ public class FileTransferService(
     private static readonly byte[] EofMagic = "JFEOF"u8.ToArray();
 
     // Active transfer cancellation tokens keyed by fileRequestId
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, CancellationTokenSource>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, CancellationTokenSource>
         _activeCts = new();
 
     public void Cancel(Guid fileRequestId)
@@ -240,7 +241,7 @@ public class FileTransferService(
             TriggerLibraryScan(filePath, config.DownloadDirectory);
 
             // Mark the file request as completed on the federation server
-            var cfg = FederationPlugin.Instance!.Configuration;
+            var cfg = configProvider.GetConfiguration();
             var req = new HttpRequestMessage(
                 HttpMethod.Put,
                 $"{cfg.FederationServerUrl.TrimEnd('/')}/api/filerequests/{fileRequestId}/complete");
