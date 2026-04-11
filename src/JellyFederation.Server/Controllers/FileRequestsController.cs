@@ -1,4 +1,5 @@
 using JellyFederation.Server.Data;
+using JellyFederation.Server.Filters;
 using JellyFederation.Server.Hubs;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Dtos;
@@ -12,6 +13,7 @@ namespace JellyFederation.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[ServiceFilter(typeof(ApiKeyAuthFilter))]
 public class FileRequestsController(
     FederationDbContext db,
     ServerConnectionTracker tracker,
@@ -19,11 +21,9 @@ public class FileRequestsController(
 {
     [HttpPost]
     public async Task<ActionResult<FileRequestDto>> Create(
-        CreateFileRequestDto request,
-        [FromHeader(Name = "X-Api-Key")] string apiKey)
+        CreateFileRequestDto request)
     {
-        var requestingServer = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
-        if (requestingServer is null) return Unauthorized();
+        var requestingServer = GetServer();
 
         var owningServer = await db.Servers.FindAsync(request.OwningServerId);
         if (owningServer is null) return NotFound("Owning server not found.");
@@ -69,11 +69,9 @@ public class FileRequestsController(
     }
 
     [HttpGet]
-    public async Task<ActionResult<List<FileRequestDto>>> List(
-        [FromHeader(Name = "X-Api-Key")] string apiKey)
+    public async Task<ActionResult<List<FileRequestDto>>> List()
     {
-        var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
-        if (server is null) return Unauthorized();
+        var server = GetServer();
 
         var requests = await db.FileRequests
             .Include(r => r.RequestingServer)
@@ -93,12 +91,9 @@ public class FileRequestsController(
     }
 
     [HttpPut("{id}/cancel")]
-    public async Task<IActionResult> Cancel(
-        Guid id,
-        [FromHeader(Name = "X-Api-Key")] string apiKey)
+    public async Task<IActionResult> Cancel(Guid id)
     {
-        var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
-        if (server is null) return Unauthorized();
+        var server = GetServer();
 
         var request = await db.FileRequests.FindAsync(id);
         if (request is null) return NotFound();
@@ -134,12 +129,9 @@ public class FileRequestsController(
     }
 
     [HttpPut("{id}/complete")]
-    public async Task<IActionResult> MarkCompleted(
-        Guid id,
-        [FromHeader(Name = "X-Api-Key")] string apiKey)
+    public async Task<IActionResult> MarkCompleted(Guid id)
     {
-        var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
-        if (server is null) return Unauthorized();
+        var server = GetServer();
 
         var request = await db.FileRequests.FindAsync(id);
         if (request is null) return NotFound();
@@ -168,6 +160,9 @@ public class FileRequestsController(
 
         return NoContent();
     }
+
+    private RegisteredServer GetServer() =>
+        (RegisteredServer)HttpContext.Items["Server"]!;
 
     private static FileRequestDto ToDto(FileRequest r, string? itemTitle = null) =>
         new(r.Id,
