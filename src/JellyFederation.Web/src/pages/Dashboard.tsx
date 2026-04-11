@@ -1,12 +1,10 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { BookOpen, Check, Copy, Download, Mail, Server, Wifi, WifiOff } from 'lucide-react'
-import { fileRequestsApi } from '../api/client'
-import { invitationsApi } from '../api/client'
-import { libraryApi } from '../api/client'
-import { loadConfig } from '../lib/config'
+import { fileRequestsApi, invitationsApi, libraryApi } from '../api/client'
 import { Card } from '../components/Card'
 import { Badge } from '../components/Badge'
+import { useConfig } from '../hooks/useConfig'
 import type { ConnectionState } from '../hooks/useSignalR'
 
 interface DashboardProps {
@@ -34,8 +32,8 @@ function CopyButton({ value }: { value: string }) {
 }
 
 export function Dashboard({ connectionState }: DashboardProps) {
-  const cfg = loadConfig()
-  const { data: library } = useQuery({ queryKey: ['library'], queryFn: () => libraryApi.browse() })
+  const cfg = useConfig()
+  const { data: libraryCounts } = useQuery({ queryKey: ['library-counts'], queryFn: () => libraryApi.browseCounts() })
   const { data: invitations } = useQuery({ queryKey: ['invitations'], queryFn: invitationsApi.list })
   const { data: requests } = useQuery({ queryKey: ['requests'], queryFn: fileRequestsApi.list })
 
@@ -45,7 +43,7 @@ export function Dashboard({ connectionState }: DashboardProps) {
   const stats = [
     {
       label: 'Federated Items',
-      value: library?.length ?? 0,
+      value: libraryCounts?.['All'] ?? 0,
       icon: BookOpen,
       accent: 'text-[var(--color-accent)]',
       bg: 'bg-[var(--color-accent-dim)]',

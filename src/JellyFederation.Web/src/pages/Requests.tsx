@@ -2,10 +2,11 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { AlertCircle, CheckCircle2, Clock, Download, Loader2, Radio, X } from 'lucide-react'
 import { fileRequestsApi } from '../api/client'
-import { loadConfig } from '../lib/config'
 import type { FileRequest, FileRequestStatus } from '../api/types'
 import { Badge } from '../components/Badge'
 import { Card } from '../components/Card'
+import { useConfig } from '../hooks/useConfig'
+import { formatBytes } from '../utils/formatBytes'
 import type { FileRequestUpdate, TransferProgress } from '../hooks/useSignalR'
 
 interface RequestsProps {
@@ -35,13 +36,6 @@ const cancellableStatuses: FileRequestStatus[] = ['Pending', 'HolePunching', 'Tr
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-}
-
-function formatBytes(bytes: number) {
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
-  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`
-  if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(1)} KB`
-  return `${bytes} B`
 }
 
 function RequestRow({
@@ -117,7 +111,7 @@ function RequestRow({
 }
 
 export function Requests({ latestUpdate, latestProgress }: RequestsProps) {
-  const cfg = loadConfig()
+  const cfg = useConfig()
   const qc = useQueryClient()
   const [progressMap, setProgressMap] = useState<Record<string, TransferProgress>>({})
   const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set())

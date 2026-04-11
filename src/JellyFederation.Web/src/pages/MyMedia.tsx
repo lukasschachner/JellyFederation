@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ChevronLeft, ChevronRight, Film, Mic2, MonitorPlay, Search, Tv } from 'lucide-react'
+import { Film, Mic2, MonitorPlay, Search, Tv } from 'lucide-react'
 import { libraryApi } from '../api/client'
 import type { MediaItem, MediaType } from '../api/types'
 import { Badge } from '../components/Badge'
 import { Card } from '../components/Card'
+import { Paginator } from '../components/Paginator'
+import { formatBytes } from '../utils/formatBytes'
 
 const PAGE_SIZE = 100
 
@@ -24,12 +26,6 @@ const TABS: { label: string; value: MediaType | 'All' }[] = [
   { label: 'Music', value: 'Music' },
   { label: 'Other', value: 'Other' },
 ]
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`
-  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)} MB`
-  return `${(bytes / 1024 ** 3).toFixed(2)} GB`
-}
 
 function RequestableToggle({ item }: { item: MediaItem }) {
   const queryClient = useQueryClient()
@@ -64,12 +60,13 @@ export function MyMedia() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [activeTab, setActiveTab] = useState<MediaType | 'All'>('All')
   const [page, setPage] = useState(1)
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   function handleSearch(value: string) {
     setSearch(value)
     setPage(1)
-    clearTimeout((window as any)._searchTimer)
-    ;(window as any)._searchTimer = setTimeout(() => setDebouncedSearch(value), 300)
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    searchTimerRef.current = setTimeout(() => setDebouncedSearch(value), 300)
   }
 
   function handleTab(tab: MediaType | 'All') {
@@ -208,50 +205,7 @@ export function MyMedia() {
             ))}
           </div>
 
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between pt-2">
-              <span className="text-xs text-[var(--color-text)]">
-                Page {page} of {totalPages} · {totalForTab} items
-              </span>
-              <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                  className="p-1.5 rounded-lg text-[var(--color-text)] hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                >
-                  <ChevronLeft size={16} />
-                </button>
-                {Array.from({ length: Math.min(7, totalPages) }, (_, i) => {
-                  const p = totalPages <= 7
-                    ? i + 1
-                    : page <= 4 ? i + 1
-                    : page >= totalPages - 3 ? totalPages - 6 + i
-                    : page - 3 + i
-                  return (
-                    <button
-                      key={p}
-                      onClick={() => setPage(p)}
-                      className={`min-w-[2rem] h-8 px-2 rounded-lg text-xs font-medium transition-colors cursor-pointer ${
-                        p === page
-                          ? 'bg-[var(--color-accent-dim)] text-[var(--color-accent)]'
-                          : 'text-[var(--color-text)] hover:bg-white/5'
-                      }`}
-                    >
-                      {p}
-                    </button>
-                  )
-                })}
-                <button
-                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages}
-                  className="p-1.5 rounded-lg text-[var(--color-text)] hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                >
-                  <ChevronRight size={16} />
-                </button>
-              </div>
-            </div>
-          )}
+          <Paginator page={page} totalPages={totalPages} totalItems={totalForTab} onPageChange={setPage} />
         </>
       )}
     </div>
