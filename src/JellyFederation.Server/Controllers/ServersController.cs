@@ -1,19 +1,30 @@
+using System.Threading.RateLimiting;
 using JellyFederation.Server.Data;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Dtos;
 using JellyFederation.Shared.Models;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 
 namespace JellyFederation.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public class ServersController(FederationDbContext db) : ControllerBase
+public class ServersController(FederationDbContext db, IConfiguration configuration) : ControllerBase
 {
     [HttpPost("register")]
+    [EnableRateLimiting("register")]
     public async Task<ActionResult<RegisterServerResponse>> Register(RegisterServerRequest request)
     {
+        var adminToken = configuration["AdminToken"];
+        if (!string.IsNullOrEmpty(adminToken))
+        {
+            var providedToken = Request.Headers["X-Admin-Token"].FirstOrDefault();
+            if (providedToken != adminToken)
+                return Unauthorized("Invalid or missing admin token.");
+        }
+
         var server = new RegisteredServer
         {
             Name = request.Name,

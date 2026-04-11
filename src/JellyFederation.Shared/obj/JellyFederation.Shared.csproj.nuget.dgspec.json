@@ -10,12 +10,12 @@
         "projectUniqueName": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/JellyFederation.Shared.csproj",
         "projectName": "JellyFederation.Shared",
         "projectPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/JellyFederation.Shared.csproj",
-        "packagesPath": "/root/.nuget/packages/",
+        "packagesPath": "/home/lukasschachner/.nuget/packages/",
         "outputPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/obj/",
         "projectStyle": "PackageReference",
         "crossTargeting": true,
         "configFilePaths": [
-          "/root/.nuget/NuGet/NuGet.Config"
+          "/home/lukasschachner/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net10.0",

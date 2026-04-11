@@ -9,3 +9,14 @@
 /home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/obj/Debug/net9.0/refint/JellyFederation.Shared.dll
 /home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/obj/Debug/net9.0/JellyFederation.Shared.pdb
 /home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/obj/Debug/net9.0/ref/JellyFederation.Shared.dll
+/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/bin/Debug/net9.0/JellyFederation.Shared.deps.json
+/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/bin/Debug/net9.0/JellyFederation.Shared.dll
+/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/bin/Debug/net9.0/JellyFederation.Shared.pdb
+/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/obj/Debug/net9.0/JellyFederation.Shared.GeneratedMSBuildEditorConfig.editorconfig
+/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/obj/Debug/net9.0/JellyFederation.Shared.AssemblyInfoInputs.cache
+/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/obj/Debug/net9.0/JellyFederation.Shared.AssemblyInfo.cs
+/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/obj/Debug/net9.0/JellyFederation.Shared.csproj.CoreCompileInputs.cache
+/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/obj/Debug/net9.0/JellyFederation.Shared.dll
+/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/obj/Debug/net9.0/refint/JellyFederation.Shared.dll
+/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/obj/Debug/net9.0/JellyFederation.Shared.pdb
+/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/obj/Debug/net9.0/ref/JellyFederation.Shared.dll

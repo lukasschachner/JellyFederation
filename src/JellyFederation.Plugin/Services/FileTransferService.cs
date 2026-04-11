@@ -57,7 +57,13 @@ public class FileTransferService(
         IPEndPoint remoteEp,
         PluginConfiguration config)
     {
-        var item = libraryManager.GetItemById(Guid.Parse(jellyfinItemId));
+        if (!Guid.TryParse(jellyfinItemId, out var itemGuid))
+        {
+            logger.LogWarning("Invalid Jellyfin item ID format: {Id}", jellyfinItemId);
+            return;
+        }
+
+        var item = libraryManager.GetItemById(itemGuid);
         if (item?.Path is null)
         {
             logger.LogError("Item {Id} not found or has no file path", jellyfinItemId);

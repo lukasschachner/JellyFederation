@@ -2,8 +2,12 @@ using JellyFederation.Server.Data;
 using JellyFederation.Server.Filters;
 using JellyFederation.Server.Hubs;
 using JellyFederation.Server.Services;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
+using System.Net;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -20,6 +24,26 @@ builder.Services.AddDbContext<FederationDbContext>(opt =>
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<ServerConnectionTracker>();
 builder.Services.AddScoped<ApiKeyAuthFilter>();
+
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+    // Only trust loopback by default
+    options.KnownProxies.Add(IPAddress.Loopback);
+    options.KnownProxies.Add(IPAddress.IPv6Loopback);
+});
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddSlidingWindowLimiter("register", o =>
+    {
+        o.PermitLimit = 10;
+        o.Window = TimeSpan.FromMinutes(1);
+        o.SegmentsPerWindow = 6;
+    });
+});
 
 // CORS: allow the frontend dev server and any configured origin.
 // In production, set AllowedOrigins in appsettings.json.
@@ -48,7 +72,9 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseForwardedHeaders();
 app.UseHttpsRedirection();
+app.UseRateLimiter();
 app.UseStaticFiles(); // serve JS/CSS/assets before routing touches the request
 app.UseCors(); // must come before MapControllers / MapHub
 app.MapControllers();

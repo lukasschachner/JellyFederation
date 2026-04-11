@@ -81,6 +81,7 @@ public class LibraryController(FederationDbContext db) : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 100)
     {
+        pageSize = Math.Min(pageSize, 500);
         var server = GetServer();
 
         var query = db.MediaItems
@@ -88,7 +89,7 @@ public class LibraryController(FederationDbContext db) : ControllerBase
             .Where(m => m.ServerId == server.Id);
 
         if (!string.IsNullOrWhiteSpace(search))
-            query = query.Where(m => EF.Functions.Like(m.Title, $"%{search}%"));
+            query = query.Where(m => EF.Functions.Like(m.Title, $"%{EscapeLikePattern(search)}%", @"\"));
 
         if (!string.IsNullOrWhiteSpace(type) &&
             Enum.TryParse<MediaType>(type, ignoreCase: true, out var parsedType))
@@ -117,7 +118,7 @@ public class LibraryController(FederationDbContext db) : ControllerBase
 
         var query = db.MediaItems.Where(m => m.ServerId == server.Id);
         if (!string.IsNullOrWhiteSpace(search))
-            query = query.Where(m => EF.Functions.Like(m.Title, $"%{search}%"));
+            query = query.Where(m => EF.Functions.Like(m.Title, $"%{EscapeLikePattern(search)}%", @"\"));
 
         var counts = await query
             .GroupBy(m => m.Type)
@@ -159,6 +160,7 @@ public class LibraryController(FederationDbContext db) : ControllerBase
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 100)
     {
+        pageSize = Math.Min(pageSize, 500);
         var server = GetServer();
 
         var query = GetBrowsableItems(server, search, type)
@@ -212,7 +214,7 @@ public class LibraryController(FederationDbContext db) : ControllerBase
             .Where(m => allowedServerIds.Contains(m.ServerId) && m.IsRequestable);
 
         if (!string.IsNullOrWhiteSpace(search))
-            query = query.Where(m => EF.Functions.Like(m.Title, $"%{search}%"));
+            query = query.Where(m => EF.Functions.Like(m.Title, $"%{EscapeLikePattern(search)}%", @"\"));
 
         if (!string.IsNullOrWhiteSpace(type) &&
             Enum.TryParse<MediaType>(type, ignoreCase: true, out var parsedType))
@@ -223,6 +225,9 @@ public class LibraryController(FederationDbContext db) : ControllerBase
 
     private RegisteredServer GetServer() =>
         (RegisteredServer)HttpContext.Items["Server"]!;
+
+    private static string EscapeLikePattern(string input) =>
+        input.Replace(@"\", @"\\").Replace("%", @"\%").Replace("_", @"\_").Replace("[", @"\[");
 
     private static MediaItemDto ToDto(MediaItem m) => new(
         m.Id, m.ServerId, m.Server.Name,

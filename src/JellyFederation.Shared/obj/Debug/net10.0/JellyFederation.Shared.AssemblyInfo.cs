@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("JellyFederation.Shared")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+46cdd6a5a3f0f89fc5b52b4396b7caf9de4e4828")]
 [assembly: System.Reflection.AssemblyProductAttribute("JellyFederation.Shared")]
 [assembly: System.Reflection.AssemblyTitleAttribute("JellyFederation.Shared")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

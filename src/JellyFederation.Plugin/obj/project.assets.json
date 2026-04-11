@@ -1999,19 +1999,19 @@
     ]
   },
   "packageFolders": {
-    "/root/.nuget/packages/": {}
+    "/home/lukasschachner/.nuget/packages/": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj",
+      "projectUniqueName": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj",
       "projectName": "JellyFederation.Plugin",
-      "projectPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj",
-      "packagesPath": "/root/.nuget/packages/",
-      "outputPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Plugin/obj/",
+      "projectPath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj",
+      "packagesPath": "/home/lukasschachner/.nuget/packages/",
+      "outputPath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Plugin/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
-        "/root/.nuget/NuGet/NuGet.Config"
+        "/home/lukasschachner/.nuget/NuGet/NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net9.0"
@@ -2023,8 +2023,8 @@
         "net9.0": {
           "targetAlias": "net9.0",
           "projectReferences": {
-            "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/JellyFederation.Shared.csproj": {
-              "projectPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/JellyFederation.Shared.csproj"
+            "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/JellyFederation.Shared.csproj": {
+              "projectPath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/JellyFederation.Shared.csproj"
             }
           }
         }
