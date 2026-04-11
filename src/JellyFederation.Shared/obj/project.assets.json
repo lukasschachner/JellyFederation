@@ -10,20 +10,20 @@
     "net9.0": []
   },
   "packageFolders": {
-    "/root/.nuget/packages/": {}
+    "/home/lukasschachner/.nuget/packages/": {}
   },
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/JellyFederation.Shared.csproj",
+      "projectUniqueName": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/JellyFederation.Shared.csproj",
       "projectName": "JellyFederation.Shared",
-      "projectPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/JellyFederation.Shared.csproj",
-      "packagesPath": "/root/.nuget/packages/",
-      "outputPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/obj/",
+      "projectPath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/JellyFederation.Shared.csproj",
+      "packagesPath": "/home/lukasschachner/.nuget/packages/",
+      "outputPath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/obj/",
       "projectStyle": "PackageReference",
       "crossTargeting": true,
       "configFilePaths": [
-        "/root/.nuget/NuGet/NuGet.Config"
+        "/home/lukasschachner/.nuget/NuGet/NuGet.Config"
       ],
       "originalTargetFrameworks": [
         "net10.0",

@@ -2891,11 +2891,11 @@
   "project": {
     "version": "1.0.0",
     "restore": {
-      "projectUniqueName": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Server/JellyFederation.Server.csproj",
+      "projectUniqueName": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Server/JellyFederation.Server.csproj",
       "projectName": "JellyFederation.Server",
-      "projectPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Server/JellyFederation.Server.csproj",
+      "projectPath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Server/JellyFederation.Server.csproj",
       "packagesPath": "/home/lukasschachner/.nuget/packages/",
-      "outputPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Server/obj/",
+      "outputPath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Server/obj/",
       "projectStyle": "PackageReference",
       "configFilePaths": [
         "/home/lukasschachner/.nuget/NuGet/NuGet.Config"
@@ -2910,8 +2910,8 @@
         "net10.0": {
           "targetAlias": "net10.0",
           "projectReferences": {
-            "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/JellyFederation.Shared.csproj": {
-              "projectPath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/JellyFederation.Shared.csproj"
+            "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/JellyFederation.Shared.csproj": {
+              "projectPath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/JellyFederation.Shared.csproj"
             }
           }
         }

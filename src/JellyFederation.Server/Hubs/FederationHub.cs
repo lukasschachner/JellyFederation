@@ -262,11 +262,8 @@ public class FederationHub(
     private IPAddress GetPublicIp()
     {
         var http = Context.GetHttpContext();
-        var forwarded = http?.Request.Headers["X-Forwarded-For"].FirstOrDefault();
-        if (!string.IsNullOrEmpty(forwarded) &&
-            IPAddress.TryParse(forwarded.Split(',')[0].Trim(), out var fwdIp))
-            return fwdIp;
-
+        // Rely on ForwardedHeaders middleware (configured in Program.cs) which
+        // only trusts known proxies and sets RemoteIpAddress correctly.
         return http?.Connection.RemoteIpAddress ?? IPAddress.Loopback;
     }
 }

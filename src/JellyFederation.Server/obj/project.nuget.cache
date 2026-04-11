@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "Pt0QNC6m728=",
+  "dgSpecHash": "YVXOKocTdcQ=",
   "success": true,
-  "projectFilePath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Server/JellyFederation.Server.csproj",
+  "projectFilePath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Server/JellyFederation.Server.csproj",
   "expectedPackageFiles": [
     "/home/lukasschachner/.nuget/packages/humanizer.core/2.14.1/humanizer.core.2.14.1.nupkg.sha512",
     "/home/lukasschachner/.nuget/packages/microsoft.aspnetcore.openapi/8.0.22/microsoft.aspnetcore.openapi.8.0.22.nupkg.sha512",

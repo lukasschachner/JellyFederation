@@ -21,11 +21,12 @@ public class InvitationsController(FederationDbContext db) : ControllerBase
         var toServer = await db.Servers.FindAsync(request.ToServerId);
         if (toServer is null) return NotFound("Target server not found.");
 
-        var exists = await db.Invitations.AnyAsync(i =>
-            i.FromServerId == fromServer.Id && i.ToServerId == toServer.Id &&
-            i.Status == InvitationStatus.Pending);
+        var existingRelationship = await db.Invitations.AnyAsync(i =>
+            (i.FromServerId == fromServer.Id && i.ToServerId == toServer.Id ||
+             i.FromServerId == toServer.Id && i.ToServerId == fromServer.Id) &&
+            (i.Status == InvitationStatus.Pending || i.Status == InvitationStatus.Accepted));
 
-        if (exists) return Conflict("An invitation is already pending.");
+        if (existingRelationship) return Conflict("A relationship already exists between these servers");
 
         var invitation = new Invitation
         {

@@ -1,11 +1,11 @@
 {
   "version": 2,
-  "dgSpecHash": "49x+R5c8CwI=",
+  "dgSpecHash": "ikD6R6BNmbw=",
   "success": true,
-  "projectFilePath": "/home/lukasschachner/code/jellyfederation/src/JellyFederation.Shared/JellyFederation.Shared.csproj",
+  "projectFilePath": "/home/lukasschachner/code/jellyfederation-security/src/JellyFederation.Shared/JellyFederation.Shared.csproj",
   "expectedPackageFiles": [
-    "/root/.nuget/packages/microsoft.netcore.app.ref/9.0.14/microsoft.netcore.app.ref.9.0.14.nupkg.sha512",
-    "/root/.nuget/packages/microsoft.aspnetcore.app.ref/9.0.14/microsoft.aspnetcore.app.ref.9.0.14.nupkg.sha512"
+    "/home/lukasschachner/.nuget/packages/microsoft.netcore.app.ref/9.0.14/microsoft.netcore.app.ref.9.0.14.nupkg.sha512",
+    "/home/lukasschachner/.nuget/packages/microsoft.aspnetcore.app.ref/9.0.14/microsoft.aspnetcore.app.ref.9.0.14.nupkg.sha512"
   ],
   "logs": []
 }

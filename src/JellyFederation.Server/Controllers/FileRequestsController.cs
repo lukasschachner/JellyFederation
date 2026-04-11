@@ -143,9 +143,12 @@ public class FileRequestsController(
 
         var request = await db.FileRequests.FindAsync(id);
         if (request is null) return NotFound();
-        // The receiver (requesting server) calls this when the download finishes
-        if (request.RequestingServerId != server.Id && request.OwningServerId != server.Id)
+        // Only the receiver (requesting server) may mark a transfer as completed
+        if (request.RequestingServerId != server.Id)
             return Forbid();
+
+        if (request.Status != FileRequestStatus.Transferring)
+            return Conflict("Request is not in progress");
 
         request.Status = FileRequestStatus.Completed;
         request.CompletedAt = DateTime.UtcNow;
