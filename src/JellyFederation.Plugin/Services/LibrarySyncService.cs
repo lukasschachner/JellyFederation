@@ -68,9 +68,21 @@ public class LibrarySyncService(
         _ => MediaType.Other
     };
 
-    private static long GetFileSize(string path)
+    private long GetFileSize(string path)
     {
-        try { return new FileInfo(path).Length; }
-        catch { return 0; }
+        try
+        {
+            return new FileInfo(path).Length;
+        }
+        catch (IOException ex)
+        {
+            logger.LogWarning(ex, "Could not get file size for {Path}", path);
+            return 0;
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            logger.LogWarning(ex, "Access denied getting file size for {Path}", path);
+            return 0;
+        }
     }
 }

@@ -3,6 +3,7 @@ using System;
 using JellyFederation.Server.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace JellyFederation.Server.Migrations
 {
     [DbContext(typeof(FederationDbContext))]
-    partial class FederationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260411200952_AddMediaItemIndexes")]
+    partial class AddMediaItemIndexes
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.5");

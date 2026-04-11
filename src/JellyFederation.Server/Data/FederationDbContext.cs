@@ -30,6 +30,12 @@ public class FederationDbContext(DbContextOptions<FederationDbContext> options) 
              .OnDelete(DeleteBehavior.Restrict);
         });
 
+        modelBuilder.Entity<MediaItem>(e =>
+        {
+            e.HasIndex(m => new { m.ServerId, m.Type });
+            e.HasIndex(m => new { m.ServerId, m.Title });
+        });
+
         modelBuilder.Entity<FileRequest>(e =>
         {
             e.HasOne(r => r.RequestingServer)
