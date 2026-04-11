@@ -19,23 +19,31 @@ public class FederationHub(
     ServerConnectionTracker tracker,
     ILogger<FederationHub> logger) : Hub
 {
-    // Called by plugin on connect (after setting API key as query param)
-    public override async Task OnConnectedAsync()
+    /// <summary>
+    /// Resolves the server from the query-string API key.
+    /// Returns null if the key is missing or invalid.
+    /// </summary>
+    private async Task<RegisteredServer?> AuthenticateAsync()
     {
         var http = Context.GetHttpContext();
         var apiKey = http?.Request.Query["apiKey"].ToString();
         if (string.IsNullOrEmpty(apiKey))
-        {
-            Context.Abort();
-            return;
-        }
+            return null;
 
-        var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
+        return await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
+    }
+
+    // Called by plugin on connect (after setting API key as query param)
+    public override async Task OnConnectedAsync()
+    {
+        var server = await AuthenticateAsync();
         if (server is null)
         {
             Context.Abort();
             return;
         }
+
+        var http = Context.GetHttpContext();
 
         // Web browser clients pass client=web — add to a group for live updates but don't
         // register in the tracker (that would stomp the real plugin connection).

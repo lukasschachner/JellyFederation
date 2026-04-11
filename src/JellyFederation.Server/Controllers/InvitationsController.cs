@@ -1,4 +1,5 @@
 using JellyFederation.Server.Data;
+using JellyFederation.Server.Filters;
 using JellyFederation.Shared.Dtos;
 using JellyFederation.Shared.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -8,15 +9,14 @@ namespace JellyFederation.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[ServiceFilter(typeof(ApiKeyAuthFilter))]
 public class InvitationsController(FederationDbContext db) : ControllerBase
 {
     [HttpPost]
     public async Task<ActionResult<InvitationDto>> Send(
-        SendInvitationRequest request,
-        [FromHeader(Name = "X-Api-Key")] string apiKey)
+        SendInvitationRequest request)
     {
-        var fromServer = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
-        if (fromServer is null) return Unauthorized();
+        var fromServer = GetServer();
 
         var toServer = await db.Servers.FindAsync(request.ToServerId);
         if (toServer is null) return NotFound("Target server not found.");
@@ -40,11 +40,9 @@ public class InvitationsController(FederationDbContext db) : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<List<InvitationDto>>> List(
-        [FromHeader(Name = "X-Api-Key")] string apiKey)
+    public async Task<ActionResult<List<InvitationDto>>> List()
     {
-        var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
-        if (server is null) return Unauthorized();
+        var server = GetServer();
 
         var invitations = await db.Invitations
             .Include(i => i.FromServer)
@@ -59,11 +57,9 @@ public class InvitationsController(FederationDbContext db) : ControllerBase
     [HttpPut("{id}/respond")]
     public async Task<ActionResult<InvitationDto>> Respond(
         Guid id,
-        RespondToInvitationRequest request,
-        [FromHeader(Name = "X-Api-Key")] string apiKey)
+        RespondToInvitationRequest request)
     {
-        var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
-        if (server is null) return Unauthorized();
+        var server = GetServer();
 
         var invitation = await db.Invitations
             .Include(i => i.FromServer)
@@ -82,12 +78,9 @@ public class InvitationsController(FederationDbContext db) : ControllerBase
     }
 
     [HttpDelete("{id}")]
-    public async Task<IActionResult> Revoke(
-        Guid id,
-        [FromHeader(Name = "X-Api-Key")] string apiKey)
+    public async Task<IActionResult> Revoke(Guid id)
     {
-        var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
-        if (server is null) return Unauthorized();
+        var server = GetServer();
 
         var invitation = await db.Invitations
             .FirstOrDefaultAsync(i => i.Id == id && i.FromServerId == server.Id);
@@ -99,6 +92,9 @@ public class InvitationsController(FederationDbContext db) : ControllerBase
 
         return NoContent();
     }
+
+    private RegisteredServer GetServer() =>
+        (RegisteredServer)HttpContext.Items["Server"]!;
 
     private static InvitationDto ToDto(Invitation i, string fromName, string toName) =>
         new(i.Id, i.FromServerId, fromName, i.ToServerId, toName, i.Status, i.CreatedAt);

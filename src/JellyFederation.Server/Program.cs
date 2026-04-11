@@ -1,4 +1,5 @@
 using JellyFederation.Server.Data;
+using JellyFederation.Server.Filters;
 using JellyFederation.Server.Hubs;
 using JellyFederation.Server.Services;
 using Microsoft.EntityFrameworkCore;
@@ -18,6 +19,7 @@ builder.Services.AddDbContext<FederationDbContext>(opt =>
 
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<ServerConnectionTracker>();
+builder.Services.AddScoped<ApiKeyAuthFilter>();
 
 // CORS: allow the frontend dev server and any configured origin.
 // In production, set AllowedOrigins in appsettings.json.

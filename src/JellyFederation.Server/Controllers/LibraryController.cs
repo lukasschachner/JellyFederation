@@ -1,4 +1,5 @@
 using JellyFederation.Server.Data;
+using JellyFederation.Server.Filters;
 using JellyFederation.Shared.Dtos;
 using JellyFederation.Shared.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -8,19 +9,18 @@ namespace JellyFederation.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
+[ServiceFilter(typeof(ApiKeyAuthFilter))]
 public class LibraryController(FederationDbContext db) : ControllerBase
 {
     /// <summary>
     /// Replaces the entire media index for the authenticated server.
     /// Plugin calls this on startup and after library changes.
-    /// Preserves existing IsRequestable flags — sync only updates metadata.
+    /// Preserves existing IsRequestable flags -- sync only updates metadata.
     /// </summary>
     [HttpPost("sync")]
-    public async Task<IActionResult> Sync(SyncMediaRequest request,
-        [FromHeader(Name = "X-Api-Key")] string apiKey)
+    public async Task<IActionResult> Sync(SyncMediaRequest request)
     {
-        var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
-        if (server is null) return Unauthorized();
+        var server = GetServer();
 
         // Keep existing requestable flags indexed by JellyfinItemId
         var existing = await db.MediaItems
@@ -57,14 +57,12 @@ public class LibraryController(FederationDbContext db) : ControllerBase
     /// </summary>
     [HttpGet("mine")]
     public async Task<ActionResult<List<MediaItemDto>>> Mine(
-        [FromHeader(Name = "X-Api-Key")] string apiKey,
         [FromQuery] string? search,
         [FromQuery] string? type,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 100)
     {
-        var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
-        if (server is null) return Unauthorized();
+        var server = GetServer();
 
         var query = db.MediaItems
             .Include(m => m.Server)
@@ -94,11 +92,9 @@ public class LibraryController(FederationDbContext db) : ControllerBase
     /// </summary>
     [HttpGet("mine/counts")]
     public async Task<ActionResult<Dictionary<string, int>>> MineCounts(
-        [FromHeader(Name = "X-Api-Key")] string apiKey,
         [FromQuery] string? search)
     {
-        var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
-        if (server is null) return Unauthorized();
+        var server = GetServer();
 
         var query = db.MediaItems.Where(m => m.ServerId == server.Id);
         if (!string.IsNullOrWhiteSpace(search))
@@ -120,11 +116,9 @@ public class LibraryController(FederationDbContext db) : ControllerBase
     [HttpPut("{itemId:guid}/requestable")]
     public async Task<IActionResult> SetRequestable(
         Guid itemId,
-        [FromBody] SetRequestableRequest body,
-        [FromHeader(Name = "X-Api-Key")] string apiKey)
+        [FromBody] SetRequestableRequest body)
     {
-        var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
-        if (server is null) return Unauthorized();
+        var server = GetServer();
 
         var item = await db.MediaItems.FirstOrDefaultAsync(
             m => m.Id == itemId && m.ServerId == server.Id);
@@ -141,31 +135,15 @@ public class LibraryController(FederationDbContext db) : ControllerBase
     /// </summary>
     [HttpGet]
     public async Task<ActionResult<List<MediaItemDto>>> Browse(
-        [FromHeader(Name = "X-Api-Key")] string apiKey,
         [FromQuery] string? search,
         [FromQuery] string? type,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 100)
     {
-        var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
-        if (server is null) return Unauthorized();
+        var server = GetServer();
 
-        var allowedServerIds = await db.Invitations
-            .Where(i => i.Status == InvitationStatus.Accepted &&
-                        (i.FromServerId == server.Id || i.ToServerId == server.Id))
-            .Select(i => i.FromServerId == server.Id ? i.ToServerId : i.FromServerId)
-            .ToListAsync();
-
-        var query = db.MediaItems
-            .Include(m => m.Server)
-            .Where(m => allowedServerIds.Contains(m.ServerId) && m.IsRequestable);
-
-        if (!string.IsNullOrWhiteSpace(search))
-            query = query.Where(m => EF.Functions.Like(m.Title, $"%{search}%"));
-
-        if (!string.IsNullOrWhiteSpace(type) &&
-            Enum.TryParse<MediaType>(type, ignoreCase: true, out var parsedType))
-            query = query.Where(m => m.Type == parsedType);
+        var query = GetBrowsableItems(server, search, type)
+            .Include(m => m.Server);
 
         var total = await query.CountAsync();
         Response.Headers["X-Total-Count"] = total.ToString();
@@ -184,23 +162,11 @@ public class LibraryController(FederationDbContext db) : ControllerBase
     /// </summary>
     [HttpGet("counts")]
     public async Task<ActionResult<Dictionary<string, int>>> BrowseCounts(
-        [FromHeader(Name = "X-Api-Key")] string apiKey,
         [FromQuery] string? search)
     {
-        var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
-        if (server is null) return Unauthorized();
+        var server = GetServer();
 
-        var allowedServerIds = await db.Invitations
-            .Where(i => i.Status == InvitationStatus.Accepted &&
-                        (i.FromServerId == server.Id || i.ToServerId == server.Id))
-            .Select(i => i.FromServerId == server.Id ? i.ToServerId : i.FromServerId)
-            .ToListAsync();
-
-        var query = db.MediaItems
-            .Where(m => allowedServerIds.Contains(m.ServerId) && m.IsRequestable);
-
-        if (!string.IsNullOrWhiteSpace(search))
-            query = query.Where(m => EF.Functions.Like(m.Title, $"%{search}%"));
+        var query = GetBrowsableItems(server, search, type: null);
 
         var counts = await query
             .GroupBy(m => m.Type)
@@ -211,6 +177,33 @@ public class LibraryController(FederationDbContext db) : ControllerBase
         result["All"] = counts.Sum(x => x.Count);
         return Ok(result);
     }
+
+    /// <summary>
+    /// Builds the base query for browsable media items from federated servers.
+    /// Filters to accepted-invitation peers, requestable items, and optional search/type.
+    /// </summary>
+    private IQueryable<MediaItem> GetBrowsableItems(RegisteredServer server, string? search, string? type)
+    {
+        var allowedServerIds = db.Invitations
+            .Where(i => i.Status == InvitationStatus.Accepted &&
+                        (i.FromServerId == server.Id || i.ToServerId == server.Id))
+            .Select(i => i.FromServerId == server.Id ? i.ToServerId : i.FromServerId);
+
+        var query = db.MediaItems
+            .Where(m => allowedServerIds.Contains(m.ServerId) && m.IsRequestable);
+
+        if (!string.IsNullOrWhiteSpace(search))
+            query = query.Where(m => EF.Functions.Like(m.Title, $"%{search}%"));
+
+        if (!string.IsNullOrWhiteSpace(type) &&
+            Enum.TryParse<MediaType>(type, ignoreCase: true, out var parsedType))
+            query = query.Where(m => m.Type == parsedType);
+
+        return query;
+    }
+
+    private RegisteredServer GetServer() =>
+        (RegisteredServer)HttpContext.Items["Server"]!;
 
     private static MediaItemDto ToDto(MediaItem m) => new(
         m.Id, m.ServerId, m.Server.Name,
