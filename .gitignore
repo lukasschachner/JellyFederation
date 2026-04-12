@@ -1,5 +1,5 @@
-bin/
-obj/
+**/bin/*
+**/obj/*
 .vs/
 node_modules/
 dist/
@@ -22,3 +22,5 @@ docker
 .claude
 .github/agents
 .github/prompts
+**/bin/
+**/obj/
