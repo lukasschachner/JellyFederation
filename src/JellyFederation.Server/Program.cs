@@ -113,7 +113,7 @@ builder.Services.AddOpenTelemetry()
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
-    options.KnownIPNetworks.Clear();
+    options.KnownNetworks.Clear();
     options.KnownProxies.Clear();
     // Only trust loopback by default
     options.KnownProxies.Add(IPAddress.Loopback);
