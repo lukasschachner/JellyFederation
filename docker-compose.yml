@@ -1,15 +1,8 @@
 services:
-  federation-server:
-    build:
-      context: .
-      dockerfile: src/JellyFederation.Server/Dockerfile
+  lgtm:
+    image: grafana/otel-lgtm:latest
     ports:
-      - "5000:8080"
-    volumes:
-      - federation-data:/app/data
-    environment:
-      - ConnectionStrings__Default=Data Source=/app/data/federation.db
+      - "3000:3000"   # Grafana
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
     restart: unless-stopped
-
-volumes:
-  federation-data:

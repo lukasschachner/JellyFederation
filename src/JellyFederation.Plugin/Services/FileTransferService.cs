@@ -1,4 +1,5 @@
 using JellyFederation.Plugin.Configuration;
+using JellyFederation.Shared.Telemetry;
 using JellyFederation.Shared.SignalR;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -8,6 +9,7 @@ using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Diagnostics;
 
 namespace JellyFederation.Plugin.Services;
 
@@ -26,13 +28,14 @@ namespace JellyFederation.Plugin.Services;
 /// (System.Net.Quic). This implementation uses a simple stop-and-wait ARQ
 /// over the punched UDP path so that no additional libraries are required.
 /// </summary>
-public class FileTransferService(
+public partial class FileTransferService(
     ILibraryManager libraryManager,
     ILibraryMonitor libraryMonitor,
     HttpClient http,
     IPluginConfigurationProvider configProvider,
     ILogger<FileTransferService> logger)
 {
+    private const uint HeaderSequence = 0xFFFF_FFFE;
     private const int ChunkSize = 32 * 1024; // 32 KB
     private const int AckTimeoutMs = 2_000;
     private const int MaxRetries = 10;
@@ -58,16 +61,26 @@ public class FileTransferService(
         IPEndPoint remoteEp,
         PluginConfiguration config)
     {
+        var startedAt = Stopwatch.StartNew();
+        var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var activity = FederationTelemetry.PluginActivitySource.StartActivity(
+            FederationTelemetry.SpanFederationOperation,
+            ActivityKind.Producer);
+        FederationTelemetry.SetCommonTags(activity, "file.transfer.send", "plugin", correlationId, releaseVersion: FederationPlugin.ReleaseVersion);
+        using var inFlight = FederationMetrics.BeginInflight("file.transfer.send", "plugin", FederationPlugin.ReleaseVersion);
+
         if (!Guid.TryParse(jellyfinItemId, out var itemGuid))
         {
-            logger.LogWarning("Invalid Jellyfin item ID format: {Id}", jellyfinItemId);
+            LogInvalidItemId(logger, jellyfinItemId);
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
             return;
         }
 
         var item = libraryManager.GetItemById(itemGuid);
         if (item?.Path is null)
         {
-            logger.LogError("Item {Id} not found or has no file path", jellyfinItemId);
+            LogItemNotFound(logger, jellyfinItemId);
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
             return;
         }
 
@@ -75,12 +88,12 @@ public class FileTransferService(
         var fileInfo = new FileInfo(filePath);
         if (!fileInfo.Exists)
         {
-            logger.LogError("File not found: {Path}", filePath);
+            LogFileNotFound(logger, filePath);
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
             return;
         }
 
-        logger.LogInformation("Sending {File} ({Size} bytes) to {Remote}",
-            fileInfo.Name, fileInfo.Length, remoteEp);
+        LogSendingFile(logger, fileInfo.Name, fileInfo.Length, remoteEp);
 
         using var cts = new CancellationTokenSource();
         _activeCts[fileRequestId] = cts;
@@ -114,11 +127,20 @@ public class FileTransferService(
 
             // Send EOF
             await socket.SendToAsync(EofMagic, SocketFlags.None, remoteEp);
-            logger.LogInformation("File sent successfully: {File}", fileInfo.Name);
+            LogFileSent(logger, fileInfo.Name);
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
+            FederationMetrics.RecordOperation("file.transfer.send", "plugin", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
         }
         catch (OperationCanceledException)
         {
-            logger.LogInformation("Send cancelled for request {Id}", fileRequestId);
+            LogSendCancelled(logger, fileRequestId);
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeCancelled);
+        }
+        catch (Exception ex)
+        {
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError, ex);
+            FederationMetrics.RecordOperation("file.transfer.send", "plugin", FederationTelemetry.OutcomeError, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+            throw;
         }
         finally
         {
@@ -134,9 +156,18 @@ public class FileTransferService(
         PluginConfiguration config,
         HubConnection connection)
     {
+        var startedAt = Stopwatch.StartNew();
+        var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var activity = FederationTelemetry.PluginActivitySource.StartActivity(
+            FederationTelemetry.SpanFederationOperation,
+            ActivityKind.Consumer);
+        FederationTelemetry.SetCommonTags(activity, "file.transfer.receive", "plugin", correlationId, releaseVersion: FederationPlugin.ReleaseVersion);
+        using var inFlight = FederationMetrics.BeginInflight("file.transfer.receive", "plugin", FederationPlugin.ReleaseVersion);
+
         if (string.IsNullOrEmpty(config.DownloadDirectory))
         {
-            logger.LogError("Download directory not configured");
+            LogDownloadDirNotConfigured(logger);
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
             return;
         }
 
@@ -146,6 +177,8 @@ public class FileTransferService(
         string? filePath = null;
         FileStream? fs = null;
         uint expectedSeq = 0;
+        bool headerReceived = false;
+        bool receivedEof = false;
         long totalBytes = 0;
         long bytesReceived = 0;
         var lastProgressReport = DateTime.UtcNow;
@@ -170,12 +203,14 @@ public class FileTransferService(
                 }
                 catch (OperationCanceledException) when (transferCts.IsCancellationRequested)
                 {
-                    logger.LogInformation("Receive cancelled for request {Id}", fileRequestId);
+                    LogReceiveCancelled(logger, fileRequestId);
                     break;
                 }
                 catch (OperationCanceledException)
                 {
-                    logger.LogError("Receive timed out waiting for data");
+                    LogReceiveTimeout(logger);
+                    FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeTimeout);
+                    FederationMetrics.RecordTimeout("file.transfer.receive", "plugin", FederationPlugin.ReleaseVersion);
                     break;
                 }
 
@@ -184,9 +219,10 @@ public class FileTransferService(
                 // Check for EOF
                 if (data.Length == EofMagic.Length && data.SequenceEqual(EofMagic))
                 {
-                    logger.LogInformation("Received EOF — file transfer complete");
+                    LogReceivedEof(logger);
                     if (totalBytes > 0)
                         await ReportProgressAsync(connection, fileRequestId, totalBytes, totalBytes);
+                    receivedEof = true;
                     break;
                 }
 
@@ -196,15 +232,22 @@ public class FileTransferService(
                 var payload = data[4..];
 
                 // Header frame
-                if (seq == 0xFFFF_FFFE)
+                if (seq == HeaderSequence)
                 {
-                    var header = JsonSerializer.Deserialize<FileHeader>(payload);
-                    if (header is null) break;
+                    if (!headerReceived)
+                    {
+                        var header = JsonSerializer.Deserialize<FileHeader>(payload);
+                        if (header is null) break;
 
-                    filePath = Path.Combine(config.DownloadDirectory, header.FileName);
-                    fs = File.Create(filePath);
-                    totalBytes = header.FileSize;
-                    logger.LogInformation("Receiving {File} ({Size} bytes)", header.FileName, header.FileSize);
+                        // Uniquify the destination path to avoid silently overwriting an existing file
+                        filePath = GetUniqueFilePath(
+                            Path.Combine(config.DownloadDirectory, header.FileName));
+                        fs = File.Create(filePath);
+                        totalBytes = header.FileSize;
+                        headerReceived = true;
+                        LogReceivingFile(logger, header.FileName, header.FileSize, filePath);
+                    }
+                    await socket.SendToAsync(BitConverter.GetBytes(HeaderSequence), SocketFlags.None, remoteEp);
                 }
                 else if (seq == expectedSeq && fs is not null)
                 {
@@ -218,10 +261,19 @@ public class FileTransferService(
                         lastProgressReport = DateTime.UtcNow;
                         await ReportProgressAsync(connection, fileRequestId, bytesReceived, totalBytes);
                     }
-                }
 
-                // Send ACK
-                await socket.SendToAsync(BitConverter.GetBytes(seq), SocketFlags.None, remoteEp);
+                    await socket.SendToAsync(BitConverter.GetBytes(seq), SocketFlags.None, remoteEp);
+                }
+                else if (seq < expectedSeq)
+                {
+                    // Duplicate packet; ACK again so sender can move on if prior ACK was lost.
+                    await socket.SendToAsync(BitConverter.GetBytes(seq), SocketFlags.None, remoteEp);
+                }
+                else
+                {
+                    // Out-of-order packet; skip ACK to force sender retransmit of missing sequence.
+                    LogOutOfOrderPacket(logger, seq, expectedSeq);
+                }
             }
         }
         finally
@@ -232,12 +284,27 @@ public class FileTransferService(
                 await fs.FlushAsync();
                 await fs.DisposeAsync();
             }
+
+            // Delete partial file if transfer did not complete cleanly
+            if (!receivedEof && filePath is not null && File.Exists(filePath))
+            {
+                try
+                {
+                    File.Delete(filePath);
+                    LogDeletedIncompleteFile(logger, filePath);
+                }
+                catch (Exception ex)
+                {
+                    LogCouldNotDeleteIncompleteFile(logger, ex, filePath);
+                }
+            }
+
             socket.Dispose();
         }
 
-        if (filePath is not null && File.Exists(filePath))
+        if (receivedEof && filePath is not null && File.Exists(filePath))
         {
-            logger.LogInformation("File saved to {Path}", filePath);
+            LogFileSaved(logger, filePath);
             TriggerLibraryScan(filePath, config.DownloadDirectory);
 
             // Mark the file request as completed on the federation server
@@ -246,16 +313,42 @@ public class FileTransferService(
                 HttpMethod.Put,
                 $"{cfg.FederationServerUrl.TrimEnd('/')}/api/filerequests/{fileRequestId}/complete");
             req.Headers.Add("X-Api-Key", cfg.ApiKey);
+            TraceContextPropagation.InjectToHttpRequest(req);
+            TraceContextPropagation.InjectCorrelationId(req.Headers, correlationId);
             try
             {
                 var resp = await http.SendAsync(req);
                 if (!resp.IsSuccessStatusCode)
-                    logger.LogWarning("Failed to mark request {Id} complete: {Status}", fileRequestId, resp.StatusCode);
+                    LogMarkCompleteFailed(logger, fileRequestId, resp.StatusCode);
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Could not notify server of completion for request {Id}", fileRequestId);
+                LogNotifyCompletionFailed(logger, ex, fileRequestId);
             }
+        }
+
+        var outcome = receivedEof ? FederationTelemetry.OutcomeSuccess : FederationTelemetry.OutcomeCancelled;
+        FederationTelemetry.SetOutcome(activity, outcome);
+        FederationMetrics.RecordOperation("file.transfer.receive", "plugin", outcome, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+    }
+
+    /// <summary>
+    /// Returns a unique file path by appending _1, _2, … if the file already exists.
+    /// </summary>
+    private static string GetUniqueFilePath(string path)
+    {
+        if (!File.Exists(path))
+            return path;
+
+        var dir = Path.GetDirectoryName(path) ?? string.Empty;
+        var nameWithoutExt = Path.GetFileNameWithoutExtension(path);
+        var ext = Path.GetExtension(path);
+
+        for (int i = 1; ; i++)
+        {
+            var candidate = Path.Combine(dir, $"{nameWithoutExt}_{i}{ext}");
+            if (!File.Exists(candidate))
+                return candidate;
         }
     }
 
@@ -273,15 +366,11 @@ public class FileTransferService(
         if (isWatched)
         {
             libraryMonitor.ReportFileSystemChanged(filePath);
-            logger.LogInformation("Triggered library scan for {File}", filePath);
+            LogTriggeredLibraryScan(logger, filePath);
         }
         else
         {
-            logger.LogWarning(
-                "Download directory {Dir} is not part of any Jellyfin library. " +
-                "Add it via Dashboard → Libraries so downloaded files appear automatically. " +
-                "Running a full library scan now as fallback.",
-                downloadDirectory);
+            LogDownloadDirNotInLibrary(logger, downloadDirectory);
             _ = Task.Run(() => libraryManager.ValidateMediaLibrary(
                 new Progress<double>(), CancellationToken.None));
         }
@@ -297,7 +386,7 @@ public class FileTransferService(
         }
         catch (Exception ex)
         {
-            logger.LogDebug(ex, "Failed to report transfer progress for {Id}", fileRequestId);
+            LogReportProgressFailed(logger, ex, fileRequestId);
         }
     }
 
@@ -319,8 +408,10 @@ public class FileTransferService(
             ct.ThrowIfCancellationRequested();
             await socket.SendToAsync(frame, SocketFlags.None, remoteEp);
 
-            using var ackCts = CancellationTokenSource.CreateLinkedTokenSource(
-                ct, new CancellationTokenSource(AckTimeoutMs).Token);
+            // Use a single linked CTS; avoid the hidden inner CTS leak from
+            // CreateLinkedTokenSource(ct, new CancellationTokenSource(timeout).Token)
+            using var ackCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            ackCts.CancelAfter(AckTimeoutMs);
             try
             {
                 await socket.ReceiveAsync(ackBuffer, SocketFlags.None, ackCts.Token);
@@ -333,8 +424,8 @@ public class FileTransferService(
             }
             catch (OperationCanceledException)
             {
-                logger.LogDebug("ACK timeout for seq {Seq}, retrying ({Attempt}/{Max})",
-                    seq, attempt + 1, MaxRetries);
+                LogAckTimeout(logger, seq, attempt + 1, MaxRetries);
+                FederationMetrics.RecordRetry("file.transfer.send", "plugin", FederationPlugin.ReleaseVersion);
             }
         }
 

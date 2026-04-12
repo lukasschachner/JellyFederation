@@ -44,9 +44,9 @@
                             API Key
                         </label>
                         <input id="apiKey" name="ApiKey"
-                               type="text" is="emby-input"
-                               placeholder="Your federation API key"
-                               style="font-family: monospace; letter-spacing: 0.1em;" />
+                               type="password" is="emby-input"
+                                placeholder="Your federation API key"
+                                style="font-family: monospace; letter-spacing: 0.1em;" />
                         <div class="fieldDescription">
                             The API key issued when you registered this server.
                         </div>
@@ -65,6 +65,18 @@
                     </div>
 
                     <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="publicJellyfinUrl">
+                            Public Jellyfin URL (optional fallback)
+                        </label>
+                        <input id="publicJellyfinUrl" name="PublicJellyfinUrl"
+                               type="url" is="emby-input"
+                               placeholder="https://jellyfin.example.com" />
+                        <div class="fieldDescription">
+                            Fallback source for previews when an image cannot be embedded during sync.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
                         <label class="inputLabel inputLabelUnfocused" for="downloadDirectory">
                             Download Directory
                         </label>
@@ -73,6 +85,30 @@
                                placeholder="/data/newmedia/federation" />
                         <div class="fieldDescription">
                             Local path where received files will be saved. Must be a directory Jellyfin can scan.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="overridePublicIp">
+                            Override Public IP (optional)
+                        </label>
+                        <input id="overridePublicIp" name="OverridePublicIp"
+                               type="text" is="emby-input"
+                               placeholder="203.0.113.25" />
+                        <div class="fieldDescription">
+                            Leave empty to auto-detect. Set this when running behind NAT/Docker with a known public IP.
+                        </div>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="holePunchPort">
+                            Hole Punch UDP Port
+                        </label>
+                        <input id="holePunchPort" name="HolePunchPort"
+                               type="number" min="0" is="emby-input"
+                               placeholder="0" />
+                        <div class="fieldDescription">
+                            0 = ephemeral port. Use a fixed port when you need NAT port-forwarding.
                         </div>
                     </div>
 
@@ -99,7 +135,10 @@
                     document.querySelector('#serverId').value = config.ServerId || '';
                     document.querySelector('#apiKey').value = config.ApiKey || '';
                     document.querySelector('#serverName').value = config.ServerName || '';
+                    document.querySelector('#publicJellyfinUrl').value = config.PublicJellyfinUrl || '';
                     document.querySelector('#downloadDirectory').value = config.DownloadDirectory || '';
+                    document.querySelector('#overridePublicIp').value = config.OverridePublicIp || '';
+                    document.querySelector('#holePunchPort').value = config.HolePunchPort || 0;
                     Dashboard.hideLoadingMsg();
                 }).catch(function (err) {
                     console.error('[JellyFederation] Failed to load config:', err);
@@ -110,34 +149,27 @@
             saveConfig: function (form) {
                 var self = this;
                 Dashboard.showLoadingMsg();
+                ApiClient.getPluginConfiguration(self.pluginId).then(function (config) {
+                    config = config || {};
+                    config.FederationServerUrl = form.querySelector('#federationServerUrl').value.trim();
+                    config.ServerId = form.querySelector('#serverId').value.trim();
+                    config.ApiKey = form.querySelector('#apiKey').value.trim();
+                    config.ServerName = form.querySelector('#serverName').value.trim();
+                    config.PublicJellyfinUrl = form.querySelector('#publicJellyfinUrl').value.trim();
+                    config.DownloadDirectory = form.querySelector('#downloadDirectory').value.trim();
+                    config.OverridePublicIp = form.querySelector('#overridePublicIp').value.trim();
 
-                function escXml(s) {
-                    return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                }
+                    var parsedPort = parseInt(form.querySelector('#holePunchPort').value, 10);
+                    config.HolePunchPort = Number.isFinite(parsedPort) && parsedPort >= 0 ? parsedPort : 0;
 
-                var xml = '<?xml version="1.0" encoding="utf-8"?>'
-                    + '<PluginConfiguration'
-                    + ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"'
-                    + ' xmlns:xsd="http://www.w3.org/2001/XMLSchema">'
-                    + '<FederationServerUrl>' + escXml(form.querySelector('#federationServerUrl').value.trim()) + '</FederationServerUrl>'
-                    + '<ServerId>' + escXml(form.querySelector('#serverId').value.trim()) + '</ServerId>'
-                    + '<ApiKey>' + escXml(form.querySelector('#apiKey').value.trim()) + '</ApiKey>'
-                    + '<ServerName>' + escXml(form.querySelector('#serverName').value.trim()) + '</ServerName>'
-                    + '<DownloadDirectory>' + escXml(form.querySelector('#downloadDirectory').value.trim()) + '</DownloadDirectory>'
-                    + '</PluginConfiguration>';
-
-                ApiClient.ajax({
-                    type: 'POST',
-                    url: ApiClient.getUrl('Plugins/' + self.pluginId + '/Configuration'),
-                    data: xml,
-                    contentType: 'application/xml'
-                }).then(function () {
-                    Dashboard.processPluginConfigurationUpdateResult();
+                    return ApiClient.updatePluginConfiguration(self.pluginId, config);
+                }).then(function (result) {
+                    Dashboard.processPluginConfigurationUpdateResult(result);
                 }).catch(function (err) {
                     var msg = err && (err.message || JSON.stringify(err)) || 'Unknown error';
                     console.error('[JellyFederation] Failed to save config:', err);
                     Dashboard.hideLoadingMsg();
-                    alert('JellyFederation: Save failed — ' + msg);
+                    Dashboard.alert({ title: 'JellyFederation', text: 'Save failed — ' + msg });
                 });
             }
         };

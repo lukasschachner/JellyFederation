@@ -7,6 +7,7 @@ import { Badge } from '../components/Badge'
 import { Card } from '../components/Card'
 import { useConfig } from '../hooks/useConfig'
 import { formatBytes } from '../utils/formatBytes'
+import { formatDateTime } from '../utils/formatDate'
 import type { FileRequestUpdate, TransferProgress } from '../hooks/useSignalR'
 
 interface RequestsProps {
@@ -33,10 +34,6 @@ const statusVariant: Record<FileRequestStatus, 'default' | 'success' | 'warning'
 }
 
 const cancellableStatuses: FileRequestStatus[] = ['Pending', 'HolePunching', 'Transferring']
-
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
-}
 
 function RequestRow({
   req,
@@ -73,7 +70,7 @@ function RequestRow({
         <p className="text-xs text-[var(--color-text)] mt-0.5">
           {isIncoming ? 'from' : 'to'}{' '}
           <span className="text-[var(--color-heading)]">{peerName}</span>
-          {' · '}{formatDate(req.createdAt)}
+          {' · '}{formatDateTime(req.createdAt)}
         </p>
         {req.status === 'Transferring' && pct !== null && (
           <div className="mt-2">

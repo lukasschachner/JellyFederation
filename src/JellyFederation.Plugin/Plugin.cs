@@ -3,6 +3,7 @@ using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
+using System.Reflection;
 
 namespace JellyFederation.Plugin;
 
@@ -18,6 +19,8 @@ public class FederationPlugin : BasePlugin<PluginConfiguration>, IHasWebPages, I
     }
 
     public static FederationPlugin? Instance { get; private set; }
+    public static string ReleaseVersion { get; } =
+        Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "dev";
 
     /// <inheritdoc />
     PluginConfiguration IPluginConfigurationProvider.GetConfiguration() => Configuration;

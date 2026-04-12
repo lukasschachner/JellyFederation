@@ -15,7 +15,7 @@ public record MediaItemDto(
     long FileSizeBytes,
     bool IsRequestable);
 
-public record SyncMediaRequest(List<MediaItemSyncEntry> Items);
+public record SyncMediaRequest(List<MediaItemSyncEntry> Items, bool ReplaceAll = true);
 
 public record MediaItemSyncEntry(
     string JellyfinItemId,

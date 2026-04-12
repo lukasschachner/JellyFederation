@@ -1,0 +1,15 @@
+---
+name: "JellyFederation"
+guid: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+version: 1
+targetAbi: "10.11.0.0"
+framework: "net9.0"
+owner: "lukasschachner"
+overview: "Federation media sharing between Jellyfin servers"
+description: "Federation media sharing between Jellyfin servers"
+category: "General"
+artifacts:
+  - "JellyFederation.Plugin.dll"
+  - "JellyFederation.Shared.dll"
+changelog: |-
+  - Initial plugin packaging manifest.

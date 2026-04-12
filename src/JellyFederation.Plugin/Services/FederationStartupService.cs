@@ -1,7 +1,9 @@
 using JellyFederation.Plugin.Configuration;
+using JellyFederation.Shared.Telemetry;
 using MediaBrowser.Controller.Library;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 
 namespace JellyFederation.Plugin.Services;
 
@@ -12,14 +14,13 @@ namespace JellyFederation.Plugin.Services;
 /// Retries the SignalR connection in the background if the federation server is not
 /// reachable at startup time.
 /// </summary>
-public class FederationStartupService(
+public partial class FederationStartupService(
     LibrarySyncService librarySync,
     FederationSignalRService signalR,
     ILibraryManager libraryManager,
     IPluginConfigurationProvider configProvider,
     ILogger<FederationStartupService> logger) : IHostedService
 {
-    private readonly SemaphoreSlim _syncLock = new(1, 1);
     private CancellationTokenSource? _retryCts;
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -42,25 +43,57 @@ public class FederationStartupService(
         while (!ct.IsCancellationRequested)
         {
             var config = configProvider.GetConfiguration();
+            var correlationId = FederationTelemetry.CreateCorrelationId();
+            using var activity = FederationTelemetry.PluginActivitySource.StartActivity(
+                FederationTelemetry.SpanFederationOperation,
+                ActivityKind.Internal);
+            FederationTelemetry.SetCommonTags(
+                activity,
+                "plugin.startup.connect",
+                "plugin",
+                correlationId,
+                releaseVersion: FederationPlugin.ReleaseVersion);
+            using var scope = logger.BeginScope(new Dictionary<string, object?>
+            {
+                ["trace_id"] = activity?.TraceId.ToString(),
+                ["span_id"] = activity?.SpanId.ToString(),
+                ["correlation_id"] = correlationId,
+                ["operation"] = "plugin.startup.connect",
+                ["component"] = "plugin"
+            });
 
             try
             {
                 await signalR.StartAsync(config, ct);
+                if (!signalR.IsConnected)
+                {
+                    LogNotConfigured(logger);
+                    FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeCancelled);
+                    return;
+                }
+
                 await librarySync.SyncAsync(config, ct);
-                logger.LogInformation("Federation plugin connected successfully");
+                FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
+                LogConnectedSuccessfully(logger,
+                    activity?.TraceId.ToString(),
+                    activity?.SpanId.ToString(),
+                    correlationId);
                 break; // connected — exit the retry loop
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
+                FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeCancelled);
                 return;
             }
             catch (Exception ex)
             {
                 var delayMs = attempt < delaysMs.Length ? delaysMs[attempt] : 60_000;
                 attempt++;
-                logger.LogWarning(ex,
-                    "Failed to connect to federation server (attempt {Attempt}). Retrying in {Delay}s",
-                    attempt, delayMs / 1000);
+                FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError, ex);
+                LogConnectionFailed(logger, ex, attempt, delayMs / 1000,
+                    activity?.TraceId.ToString(),
+                    activity?.SpanId.ToString(),
+                    correlationId);
                 try { await Task.Delay(delayMs, ct); }
                 catch (OperationCanceledException) { return; }
             }
@@ -80,19 +113,19 @@ public class FederationStartupService(
     {
         _ = Task.Run(async () =>
         {
-            if (!await _syncLock.WaitAsync(0)) return;
             try
             {
                 var config = configProvider.GetConfiguration();
+                if (!signalR.IsConnected)
+                {
+                    LogSkippingResync(logger);
+                    return;
+                }
                 await librarySync.SyncAsync(config);
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Library re-sync failed");
-            }
-            finally
-            {
-                _syncLock.Release();
+                LogResyncFailed(logger, ex);
             }
         });
     }

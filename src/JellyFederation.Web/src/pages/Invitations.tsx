@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Check, Mail, Plus, Send, Trash2, X } from 'lucide-react'
 import { invitationsApi } from '../api/client'
+import { formatDate } from '../utils/formatDate'
 import type { Invitation } from '../api/types'
 import { useConfig } from '../hooks/useConfig'
 import { Badge } from '../components/Badge'
@@ -19,9 +20,6 @@ function statusBadge(status: Invitation['status']) {
   return map[status]
 }
 
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' })
-}
 
 export function Invitations() {
   const cfg = useConfig()

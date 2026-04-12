@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Download, Film, Mic2, MonitorPlay, Search, Tv } from 'lucide-react'
 import { libraryApi, fileRequestsApi } from '../api/client'
@@ -8,6 +8,7 @@ import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { Paginator } from '../components/Paginator'
 import { formatBytes } from '../utils/formatBytes'
+import { useMediaFilter, TABS } from '../hooks/useMediaFilter'
 
 const PAGE_SIZE = 100
 
@@ -27,20 +28,24 @@ const typeBadge: Record<MediaType, 'default' | 'success' | 'warning' | 'neutral'
   Other: 'neutral',
 }
 
-const TABS: { label: string; value: MediaType | 'All' }[] = [
-  { label: 'All', value: 'All' },
-  { label: 'Movies', value: 'Movie' },
-  { label: 'Series', value: 'Series' },
-  { label: 'Episodes', value: 'Episode' },
-  { label: 'Music', value: 'Music' },
-  { label: 'Other', value: 'Other' },
-]
-
 function MediaCard({ item, onRequest }: { item: MediaItem; onRequest: (item: MediaItem) => void }) {
+  const [imageFailed, setImageFailed] = useState(false)
+  const showImage = Boolean(item.imageUrl) && !imageFailed
+
   return (
     <Card className="flex flex-col gap-3 hover:border-[var(--color-accent)]/40 transition-colors">
-      <div className="w-full aspect-video bg-white/5 rounded-lg flex items-center justify-center text-[var(--color-text)]">
-        {typeIcon[item.type] ?? <Film size={24} />}
+      <div className="w-full aspect-video bg-white/5 rounded-lg overflow-hidden flex items-center justify-center text-[var(--color-text)]">
+        {showImage ? (
+          <img
+            src={item.imageUrl ?? undefined}
+            alt={item.title}
+            className="w-full h-full object-cover"
+            loading="lazy"
+            onError={() => setImageFailed(true)}
+          />
+        ) : (
+          typeIcon[item.type] ?? <Film size={24} />
+        )}
       </div>
 
       <div className="flex-1 min-w-0">
@@ -70,25 +75,9 @@ function MediaCard({ item, onRequest }: { item: MediaItem; onRequest: (item: Med
 }
 
 export function Library() {
-  const [search, setSearch] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<MediaType | 'All'>('All')
-  const [page, setPage] = useState(1)
+  const { search, debouncedSearch, activeTab, page, setPage, handleSearch, handleTab } = useMediaFilter()
   const [requestError, setRequestError] = useState<string | null>(null)
   const queryClient = useQueryClient()
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  function handleSearch(value: string) {
-    setSearch(value)
-    setPage(1)
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
-    searchTimerRef.current = setTimeout(() => setDebouncedSearch(value), 300)
-  }
-
-  function handleTab(tab: MediaType | 'All') {
-    setActiveTab(tab)
-    setPage(1)
-  }
 
   const { data: counts } = useQuery({
     queryKey: ['library-counts', debouncedSearch],

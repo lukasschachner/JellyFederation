@@ -2,9 +2,11 @@ using JellyFederation.Server.Data;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Models;
 using JellyFederation.Shared.SignalR;
+using JellyFederation.Shared.Telemetry;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using System.Net;
+using System.Diagnostics;
 
 namespace JellyFederation.Server.Hubs;
 
@@ -14,9 +16,10 @@ namespace JellyFederation.Server.Hubs;
 ///   - Hole punch signaling (rendezvous before P2P transfer)
 ///   - File request notifications
 /// </summary>
-public class FederationHub(
+public partial class FederationHub(
     FederationDbContext db,
     ServerConnectionTracker tracker,
+    FileRequestNotifier notifier,
     ILogger<FederationHub> logger) : Hub
 {
     /// <summary>
@@ -28,9 +31,15 @@ public class FederationHub(
         var http = Context.GetHttpContext();
         var apiKey = http?.Request.Query["apiKey"].ToString();
         if (string.IsNullOrEmpty(apiKey))
+        {
+            LogHubAuthenticationMissingApiKey(logger, Context.ConnectionId);
             return null;
+        }
 
-        return await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
+        var server = await db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey);
+        if (server is null)
+            LogHubAuthenticationFailed(logger, Context.ConnectionId);
+        return server;
     }
 
     // Called by plugin on connect (after setting API key as query param)
@@ -39,6 +48,7 @@ public class FederationHub(
         var server = await AuthenticateAsync();
         if (server is null)
         {
+            LogHubConnectionAbortedUnauthenticated(logger, Context.ConnectionId);
             Context.Abort();
             return;
         }
@@ -52,7 +62,7 @@ public class FederationHub(
         if (clientType == "web")
         {
             await Groups.AddToGroupAsync(Context.ConnectionId, $"server:{server.Id}");
-            logger.LogDebug("Web client for server {Name} ({Id}) connected", server.Name, server.Id);
+            LogWebClientConnected(logger, server.Name, server.Id);
         }
         else
         {
@@ -63,7 +73,7 @@ public class FederationHub(
             server.LastSeenAt = DateTime.UtcNow;
             await db.SaveChangesAsync();
 
-            logger.LogInformation("Server {Name} ({Id}) connected from {Ip}", server.Name, server.Id, publicIp);
+            LogServerConnected(logger, server.Name, server.Id, publicIp);
 
             // Re-send any Pending file request notifications this server may have missed while offline
             await ResendPendingNotificationsAsync(server);
@@ -82,9 +92,7 @@ public class FederationHub(
         foreach (var req in pending)
         {
             bool isSender = req.OwningServerId == server.Id;
-            logger.LogInformation(
-                "Re-sending FileRequestNotification for request {Id} to {Name} (isSender={IsSender})",
-                req.Id, server.Name, isSender);
+            LogResendingNotification(logger, req.Id, server.Name, isSender);
             try
             {
                 await Clients.Caller.SendAsync(
@@ -93,14 +101,16 @@ public class FederationHub(
             }
             catch (Exception ex)
             {
-                logger.LogWarning("Failed to resend notification for {Id} to {Name}: {Err}",
-                    req.Id, server.Name, ex.Message);
+                LogResendNotificationFailed(logger, req.Id, server.Name, ex.Message);
             }
         }
     }
 
     public override async Task OnDisconnectedAsync(Exception? exception)
     {
+        if (exception is not null)
+            LogDisconnectedWithException(logger, Context.ConnectionId, exception);
+
         var serverId = tracker.GetServerId(Context.ConnectionId);
         tracker.Unregister(Context.ConnectionId);
 
@@ -111,7 +121,7 @@ public class FederationHub(
             {
                 server.IsOnline = false;
                 await db.SaveChangesAsync();
-                logger.LogInformation("Server {Name} ({Id}) disconnected", server.Name, server.Id);
+                LogServerDisconnected(logger, server.Name, server.Id);
             }
         }
 
@@ -124,28 +134,39 @@ public class FederationHub(
     /// </summary>
     public async Task ReportHolePunchReady(HolePunchReady message)
     {
+        var startedAt = Stopwatch.StartNew();
+        var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var activity = FederationTelemetry.ServerActivitySource.StartActivity(
+            FederationTelemetry.SpanSignalRWorkflow,
+            ActivityKind.Server);
+        FederationTelemetry.SetCommonTags(activity, "holepunch.ready", "server", correlationId, releaseVersion: "server");
+
         try
         {
             var serverId = tracker.GetServerId(Context.ConnectionId);
-            if (serverId is null) return;
+            if (serverId is null)
+            {
+                LogHolePunchReadyUnknownConnection(logger, Context.ConnectionId, message.FileRequestId);
+                FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
+                return;
+            }
 
             var request = await db.FileRequests.FindAsync(message.FileRequestId);
             if (request is null)
             {
-                logger.LogWarning("ReportHolePunchReady: file request {Id} not found — ignoring", message.FileRequestId);
+                LogHolePunchReadyNotFound(logger, message.FileRequestId);
+                FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
                 return;
             }
 
-            logger.LogInformation(
-                "ReportHolePunchReady from server {ServerId} for request {RequestId} on port {Port}",
-                serverId, message.FileRequestId, message.UdpPort);
+            LogHolePunchReady(logger, serverId.Value, message.FileRequestId, message.UdpPort);
 
             // Use plugin-supplied override IP if provided (e.g. Docker/NAT scenarios)
             if (!string.IsNullOrWhiteSpace(message.OverridePublicIp) &&
                 IPAddress.TryParse(message.OverridePublicIp, out var overrideIp))
             {
                 tracker.SetPublicIpOverride(Context.ConnectionId, overrideIp);
-                logger.LogInformation("Using override public IP {Ip} for {ServerId}", overrideIp, serverId);
+                LogOverrideIp(logger, overrideIp, serverId.Value);
             }
 
             if (tracker.TryAddHolePunchReady(
@@ -157,10 +178,15 @@ public class FederationHub(
             {
                 await DispatchHolePunch(request, candidates);
             }
+
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
+            FederationMetrics.RecordOperation("holepunch.ready", "server", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed);
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Unhandled error in ReportHolePunchReady for request {Id}", message.FileRequestId);
+            LogHolePunchReadyError(logger, ex, message.FileRequestId);
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError, ex);
+            FederationMetrics.RecordOperation("holepunch.ready", "server", FederationTelemetry.OutcomeError, startedAt.Elapsed);
         }
     }
 
@@ -169,24 +195,43 @@ public class FederationHub(
     /// </summary>
     public async Task ReportHolePunchResult(HolePunchResult result)
     {
+        var startedAt = Stopwatch.StartNew();
+        var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var activity = FederationTelemetry.ServerActivitySource.StartActivity(
+            FederationTelemetry.SpanSignalRWorkflow,
+            ActivityKind.Server);
+        FederationTelemetry.SetCommonTags(activity, "holepunch.result", "server", correlationId, releaseVersion: "server");
+
         var request = await db.FileRequests.FindAsync(result.FileRequestId);
-        if (request is null) return;
+        if (request is null)
+        {
+            LogHolePunchResultNotFound(logger, result.FileRequestId);
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
+            return;
+        }
+
+        LogHolePunchResultReceived(logger, result.FileRequestId, result.Success, result.Error ?? string.Empty);
 
         if (result.Success)
         {
             request.Status = FileRequestStatus.Transferring;
+            LogTransferStarted(logger, result.FileRequestId);
         }
         else
         {
             request.Status = FileRequestStatus.Failed;
             request.FailureReason = $"Hole punch failed: {result.Error}. "
                 + "The server may be behind symmetric NAT. Consider configuring port forwarding.";
+            LogHolePunchMarkedFailed(logger, result.FileRequestId, request.FailureReason);
         }
 
         await db.SaveChangesAsync();
 
-        // Notify both sides of the status update
-        await NotifyFileRequestStatus(request);
+        // Notify both sides of the status update via the shared notifier
+        await notifier.NotifyStatusAsync(request);
+        var outcome = result.Success ? FederationTelemetry.OutcomeSuccess : FederationTelemetry.OutcomeError;
+        FederationTelemetry.SetOutcome(activity, outcome);
+        FederationMetrics.RecordOperation("holepunch.result", "server", outcome, startedAt.Elapsed);
     }
 
     private async Task DispatchHolePunch(FileRequest request, HolePunchCandidate[] candidates)
@@ -197,14 +242,18 @@ public class FederationHub(
 
         if (sender is null || receiver is null)
         {
-            logger.LogWarning("Could not match candidates to file request {Id}", request.Id);
+            LogCandidateMatchFailed(logger, request.Id);
             return;
         }
 
         var senderIp = tracker.GetPublicIp(sender.ConnectionId);
         var receiverIp = tracker.GetPublicIp(receiver.ConnectionId);
 
-        if (senderIp is null || receiverIp is null) return;
+        if (senderIp is null || receiverIp is null)
+        {
+            LogHolePunchMissingPublicIp(logger, request.Id, sender.ConnectionId, receiver.ConnectionId);
+            return;
+        }
 
         request.Status = FileRequestStatus.HolePunching;
         await db.SaveChangesAsync();
@@ -227,9 +276,7 @@ public class FederationHub(
                 LocalPort: receiver.UdpPort,
                 Role: HolePunchRole.Receiver));
 
-        logger.LogInformation(
-            "Hole punch initiated for request {Id}: {SenderIp}:{SenderPort} <-> {ReceiverIp}:{ReceiverPort}",
-            request.Id, senderIp, sender.UdpPort, receiverIp, receiver.UdpPort);
+        LogHolePunchInitiated(logger, request.Id, senderIp, sender.UdpPort, receiverIp, receiver.UdpPort);
     }
 
     /// <summary>
@@ -238,33 +285,16 @@ public class FederationHub(
     public async Task ReportTransferProgress(TransferProgress progress)
     {
         var request = await db.FileRequests.FindAsync(progress.FileRequestId);
-        if (request is null) return;
+        if (request is null)
+        {
+            LogTransferProgressRequestNotFound(logger, progress.FileRequestId, progress.BytesReceived, progress.TotalBytes);
+            return;
+        }
 
         // Forward to browser clients watching either server
         await Clients.Group($"server:{request.OwningServerId}").SendAsync("TransferProgress", progress);
         await Clients.Group($"server:{request.RequestingServerId}").SendAsync("TransferProgress", progress);
-    }
-
-    private async Task NotifyFileRequestStatus(FileRequest request)
-    {
-        var update = new FileRequestStatusUpdate(
-            request.Id,
-            request.Status.ToString(),
-            request.FailureReason);
-
-        // Notify plugin connections (for transfer logic)
-        var senderConn = tracker.GetConnectionId(request.OwningServerId);
-        var receiverConn = tracker.GetConnectionId(request.RequestingServerId);
-
-        if (senderConn is not null)
-            await Clients.Client(senderConn).SendAsync("FileRequestStatusUpdate", update);
-
-        if (receiverConn is not null)
-            await Clients.Client(receiverConn).SendAsync("FileRequestStatusUpdate", update);
-
-        // Notify browser clients watching either server's dashboard
-        await Clients.Group($"server:{request.OwningServerId}").SendAsync("FileRequestStatusUpdate", update);
-        await Clients.Group($"server:{request.RequestingServerId}").SendAsync("FileRequestStatusUpdate", update);
+        LogTransferProgressForwarded(logger, request.Id, request.OwningServerId, request.RequestingServerId, progress.BytesReceived, progress.TotalBytes);
     }
 
     private IPAddress GetPublicIp()

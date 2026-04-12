@@ -1,8 +1,12 @@
 import type { Config, FileRequest, Invitation, MediaItem, ServerInfo } from './types'
 
 function getConfig(): Config | null {
-  const raw = localStorage.getItem('jf_config')
-  return raw ? JSON.parse(raw) : null
+  try {
+    const raw = localStorage.getItem('jf_config')
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
 }
 
 function headers(): Record<string, string> {

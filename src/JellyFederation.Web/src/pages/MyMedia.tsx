@@ -1,4 +1,3 @@
-import { useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Film, Mic2, MonitorPlay, Search, Tv } from 'lucide-react'
 import { libraryApi } from '../api/client'
@@ -7,6 +6,7 @@ import { Badge } from '../components/Badge'
 import { Card } from '../components/Card'
 import { Paginator } from '../components/Paginator'
 import { formatBytes } from '../utils/formatBytes'
+import { useMediaFilter, TABS } from '../hooks/useMediaFilter'
 
 const PAGE_SIZE = 100
 
@@ -17,15 +17,6 @@ const typeIcon: Record<MediaType, React.ReactNode> = {
   Music: <Mic2 size={13} />,
   Other: null,
 }
-
-const TABS: { label: string; value: MediaType | 'All' }[] = [
-  { label: 'All', value: 'All' },
-  { label: 'Movies', value: 'Movie' },
-  { label: 'Series', value: 'Series' },
-  { label: 'Episodes', value: 'Episode' },
-  { label: 'Music', value: 'Music' },
-  { label: 'Other', value: 'Other' },
-]
 
 function RequestableToggle({ item }: { item: MediaItem }) {
   const queryClient = useQueryClient()
@@ -56,23 +47,7 @@ function RequestableToggle({ item }: { item: MediaItem }) {
 }
 
 export function MyMedia() {
-  const [search, setSearch] = useState('')
-  const [debouncedSearch, setDebouncedSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<MediaType | 'All'>('All')
-  const [page, setPage] = useState(1)
-  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  function handleSearch(value: string) {
-    setSearch(value)
-    setPage(1)
-    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
-    searchTimerRef.current = setTimeout(() => setDebouncedSearch(value), 300)
-  }
-
-  function handleTab(tab: MediaType | 'All') {
-    setActiveTab(tab)
-    setPage(1)
-  }
+  const { search, debouncedSearch, activeTab, page, setPage, handleSearch, handleTab } = useMediaFilter()
 
   const { data: counts } = useQuery({
     queryKey: ['my-media-counts', debouncedSearch],

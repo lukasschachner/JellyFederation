@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
+using JellyFederation.Shared.Telemetry;
+using Microsoft.Extensions.Logging;
 
 namespace JellyFederation.Server.Services;
 
@@ -7,7 +9,7 @@ namespace JellyFederation.Server.Services;
 /// Tracks which SignalR connection belongs to which registered server,
 /// and stores the public endpoint reported by each connected plugin.
 /// </summary>
-public class ServerConnectionTracker
+public partial class ServerConnectionTracker(ILogger<ServerConnectionTracker> logger)
 {
     // serverId -> connectionId
     private readonly ConcurrentDictionary<Guid, string> _serverToConnection = new();
@@ -17,12 +19,14 @@ public class ServerConnectionTracker
     private readonly ConcurrentDictionary<string, IPAddress> _connectionPublicIp = new();
     // fileRequestId -> (connectionId, udpPort) for hole punch staging
     private readonly ConcurrentDictionary<Guid, HolePunchCandidate[]> _holePunchStaging = new();
+    private readonly ConcurrentDictionary<Guid, IDisposable> _activeConnections = new();
 
     public void Register(Guid serverId, string connectionId, IPAddress publicIp)
     {
         // Remove any stale mapping for this server
         if (_serverToConnection.TryGetValue(serverId, out var oldConn))
         {
+            LogReplacingStaleConnection(logger, serverId, oldConn, connectionId);
             _connectionToServer.TryRemove(oldConn, out _);
             _connectionPublicIp.TryRemove(oldConn, out _);
         }
@@ -30,12 +34,25 @@ public class ServerConnectionTracker
         _serverToConnection[serverId] = connectionId;
         _connectionToServer[connectionId] = serverId;
         _connectionPublicIp[connectionId] = publicIp;
+        if (!_activeConnections.ContainsKey(serverId))
+            _activeConnections[serverId] = FederationMetrics.BeginInflight("signalr.connection", "server");
+        LogRegisteredConnection(logger, serverId, connectionId, publicIp);
     }
 
     public void Unregister(string connectionId)
     {
+        LogUnregisteringConnection(logger, connectionId);
         if (_connectionToServer.TryRemove(connectionId, out var serverId))
+        {
             _serverToConnection.TryRemove(serverId, out _);
+            if (_activeConnections.TryRemove(serverId, out var scope))
+                scope.Dispose();
+            LogUnregisteredConnection(logger, serverId, connectionId);
+        }
+        else
+        {
+            LogUnregisterWithoutServer(logger, connectionId);
+        }
 
         _connectionPublicIp.TryRemove(connectionId, out _);
     }
@@ -49,8 +66,11 @@ public class ServerConnectionTracker
     public IPAddress? GetPublicIp(string connectionId) =>
         _connectionPublicIp.TryGetValue(connectionId, out var ip) ? ip : null;
 
-    public void SetPublicIpOverride(string connectionId, IPAddress ip) =>
+    public void SetPublicIpOverride(string connectionId, IPAddress ip)
+    {
         _connectionPublicIp[connectionId] = ip;
+        LogPublicIpOverride(logger, connectionId, ip);
+    }
 
     /// <summary>
     /// Records that a peer is ready for hole punching on the given file request.
@@ -74,11 +94,13 @@ public class ServerConnectionTracker
                 var others = existing.Where(c => c.ServerId != serverId).ToArray();
                 return [.. others, entry];
             });
+        LogHolePunchStaged(logger, fileRequestId, serverId, udpPort, candidates.Length);
 
         // Dispatch only when we have exactly one entry per side (distinct servers)
         if (candidates.Select(c => c.ServerId).Distinct().Count() >= 2)
         {
             _holePunchStaging.TryRemove(fileRequestId, out _);
+            LogHolePunchReadyToDispatch(logger, fileRequestId, candidates.Length);
             return true;
         }
 

@@ -2,14 +2,63 @@ using JellyFederation.Server.Data;
 using JellyFederation.Server.Filters;
 using JellyFederation.Server.Hubs;
 using JellyFederation.Server.Services;
+using JellyFederation.Shared.Telemetry;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using System.Net;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.RateLimiting;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Logs;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
+using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.Configure(options =>
+{
+    options.ActivityTrackingOptions =
+        ActivityTrackingOptions.TraceId |
+        ActivityTrackingOptions.SpanId |
+        ActivityTrackingOptions.ParentId |
+        ActivityTrackingOptions.Tags |
+        ActivityTrackingOptions.Baggage;
+});
+
+var telemetrySection = builder.Configuration.GetSection("Telemetry");
+var telemetryServiceName = telemetrySection.GetValue<string>("ServiceName") ?? "jellyfederation-server";
+var telemetryOtlpEndpoint = telemetrySection.GetValue<string>("OtlpEndpoint");
+var telemetrySamplingRatio = Math.Clamp(telemetrySection.GetValue<double?>("SamplingRatio") ?? 1.0, 0, 1);
+var enableTracing = telemetrySection.GetValue<bool?>("EnableTracing") ?? true;
+var enableMetrics = telemetrySection.GetValue<bool?>("EnableMetrics") ?? true;
+var enableLogs = telemetrySection.GetValue<bool?>("EnableLogs") ?? true;
+var releaseVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "dev";
+FederationTelemetry.CurrentReleaseVersion = releaseVersion;
+
+builder.Logging.AddOpenTelemetry(logging =>
+{
+    if (!enableLogs)
+        return;
+
+    logging.IncludeFormattedMessage = true;
+    logging.IncludeScopes = true;
+    logging.ParseStateValues = true;
+    logging.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(telemetryServiceName, serviceVersion: releaseVersion));
+
+    if (Uri.TryCreate(telemetryOtlpEndpoint, UriKind.Absolute, out var endpoint))
+    {
+        logging.AddOtlpExporter(options => options.Endpoint = endpoint);
+    }
+});
+
+var maxRequestBodySizeMb = builder.Configuration.GetValue<long?>("ServerLimits:MaxRequestBodySizeMb") ?? 100;
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = maxRequestBodySizeMb * 1024L * 1024L;
+});
 
 builder.Services.AddControllers()
     .AddJsonOptions(o =>
@@ -22,8 +71,44 @@ builder.Services.AddDbContext<FederationDbContext>(opt =>
         ?? "Data Source=federation.db"));
 
 builder.Services.AddSignalR();
+builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<ServerConnectionTracker>();
+builder.Services.AddSingleton<FileRequestNotifier>();
 builder.Services.AddScoped<ApiKeyAuthFilter>();
+builder.Services.AddHostedService<StaleRequestCleanupService>();
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService(telemetryServiceName, serviceVersion: releaseVersion))
+    .WithTracing(tracing =>
+    {
+        if (!enableTracing)
+            return;
+
+        tracing
+            .AddSource(FederationTelemetry.ActivitySourceServerName, FederationTelemetry.ActivitySourcePluginName)
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .SetSampler(new ParentBasedSampler(new TraceIdRatioBasedSampler(telemetrySamplingRatio)));
+
+        if (Uri.TryCreate(telemetryOtlpEndpoint, UriKind.Absolute, out var endpoint))
+        {
+            tracing.AddOtlpExporter(options => options.Endpoint = endpoint);
+        }
+    })
+    .WithMetrics(metrics =>
+    {
+        if (!enableMetrics)
+            return;
+
+        metrics
+            .AddMeter(FederationMetrics.MeterName)
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation();
+
+        if (Uri.TryCreate(telemetryOtlpEndpoint, UriKind.Absolute, out var endpoint))
+        {
+            metrics.AddOtlpExporter(options => options.Endpoint = endpoint);
+        }
+    });
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -73,6 +158,30 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseForwardedHeaders();
+app.Use(async (context, next) =>
+{
+    var activity = Activity.Current;
+    if (activity is not null)
+    {
+        activity.SetTag(FederationTelemetry.TagComponent, "server");
+        activity.SetTag(FederationTelemetry.TagReleaseVersion, releaseVersion);
+        activity.SetTag(FederationTelemetry.TagTaxonomyVersion, FederationTelemetry.TaxonomyVersion);
+    }
+
+    var correlationId = context.Request.Headers["X-Correlation-ID"].FirstOrDefault()
+        ?? FederationTelemetry.CreateCorrelationId();
+
+    using var scope = app.Logger.BeginScope(new Dictionary<string, object?>
+    {
+        ["trace_id"] = activity?.TraceId.ToString(),
+        ["span_id"] = activity?.SpanId.ToString(),
+        ["correlation_id"] = correlationId,
+        ["component"] = "server",
+        ["release"] = releaseVersion
+    });
+
+    await next();
+});
 app.UseHttpsRedirection();
 app.UseRateLimiter();
 app.UseStaticFiles(); // serve JS/CSS/assets before routing touches the request

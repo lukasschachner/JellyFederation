@@ -2,15 +2,20 @@ using JellyFederation.Server.Data;
 using JellyFederation.Server.Filters;
 using JellyFederation.Shared.Dtos;
 using JellyFederation.Shared.Models;
+using JellyFederation.Shared.Telemetry;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 
 namespace JellyFederation.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
 [ServiceFilter(typeof(ApiKeyAuthFilter))]
-public class LibraryController(FederationDbContext db) : ControllerBase
+public partial class LibraryController(
+    FederationDbContext db,
+    ILogger<LibraryController> logger) : AuthenticatedController
 {
     /// <summary>
     /// Replaces the entire media index for the authenticated server.
@@ -20,7 +25,15 @@ public class LibraryController(FederationDbContext db) : ControllerBase
     [HttpPost("sync")]
     public async Task<IActionResult> Sync(SyncMediaRequest request)
     {
-        var server = GetServer();
+        var startedAt = Stopwatch.StartNew();
+        using var activity = FederationTelemetry.ServerActivitySource.StartActivity(
+            FederationTelemetry.SpanFederationOperation,
+            ActivityKind.Server);
+        FederationTelemetry.SetCommonTags(activity, "library.sync", "server", CorrelationId);
+        using var inFlight = FederationMetrics.BeginInflight("library.sync", "server");
+
+        var server = CurrentServer;
+        LogSyncStarted(logger, server.Id, request.Items.Count, request.ReplaceAll);
 
         // Differential sync: update changed items, add new ones, remove stale ones
         var existing = await db.MediaItems
@@ -28,6 +41,8 @@ public class LibraryController(FederationDbContext db) : ControllerBase
             .ToDictionaryAsync(m => m.JellyfinItemId);
 
         var incomingIds = new HashSet<string>(request.Items.Count);
+        var updatedCount = 0;
+        var addedCount = 0;
 
         foreach (var item in request.Items)
         {
@@ -42,6 +57,7 @@ public class LibraryController(FederationDbContext db) : ControllerBase
                 dbItem.Overview = item.Overview;
                 dbItem.ImageUrl = item.ImageUrl;
                 dbItem.FileSizeBytes = item.FileSizeBytes;
+                updatedCount++;
             }
             else
             {
@@ -58,14 +74,23 @@ public class LibraryController(FederationDbContext db) : ControllerBase
                     FileSizeBytes = item.FileSizeBytes,
                     IsRequestable = true
                 });
+                addedCount++;
             }
         }
 
-        // Remove items that no longer exist in Jellyfin
-        var staleItems = existing.Values.Where(m => !incomingIds.Contains(m.JellyfinItemId));
-        db.MediaItems.RemoveRange(staleItems);
+        var removedCount = 0;
+        if (request.ReplaceAll)
+        {
+            // Remove items that no longer exist in Jellyfin
+            var staleItems = existing.Values.Where(m => !incomingIds.Contains(m.JellyfinItemId)).ToList();
+            removedCount = staleItems.Count;
+            db.MediaItems.RemoveRange(staleItems);
+        }
 
         await db.SaveChangesAsync();
+        LogSyncCompleted(logger, server.Id, request.Items.Count, addedCount, updatedCount, removedCount);
+        FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
+        FederationMetrics.RecordOperation("library.sync", "server", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed);
 
         return Ok();
     }
@@ -82,18 +107,19 @@ public class LibraryController(FederationDbContext db) : ControllerBase
         [FromQuery] int pageSize = 100)
     {
         pageSize = Math.Min(pageSize, 500);
-        var server = GetServer();
+        var server = CurrentServer;
 
         var query = db.MediaItems
             .Include(m => m.Server)
             .Where(m => m.ServerId == server.Id);
 
-        if (!string.IsNullOrWhiteSpace(search))
-            query = query.Where(m => EF.Functions.Like(m.Title, $"%{EscapeLikePattern(search)}%", @"\"));
+        query = ApplyTitleSearch(query, search);
 
         if (!string.IsNullOrWhiteSpace(type) &&
             Enum.TryParse<MediaType>(type, ignoreCase: true, out var parsedType))
             query = query.Where(m => m.Type == parsedType);
+        else if (!string.IsNullOrWhiteSpace(type))
+            LogInvalidMediaTypeFilter(logger, type, "mine");
 
         var total = await query.CountAsync();
         Response.Headers["X-Total-Count"] = total.ToString();
@@ -103,6 +129,7 @@ public class LibraryController(FederationDbContext db) : ControllerBase
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync();
+        LogMineReturned(logger, server.Id, total, page, pageSize, search, type);
 
         return Ok(items.Select(ToDto));
     }
@@ -114,11 +141,9 @@ public class LibraryController(FederationDbContext db) : ControllerBase
     public async Task<ActionResult<Dictionary<string, int>>> MineCounts(
         [FromQuery] string? search)
     {
-        var server = GetServer();
+        var server = CurrentServer;
 
-        var query = db.MediaItems.Where(m => m.ServerId == server.Id);
-        if (!string.IsNullOrWhiteSpace(search))
-            query = query.Where(m => EF.Functions.Like(m.Title, $"%{EscapeLikePattern(search)}%", @"\"));
+        var query = ApplyTitleSearch(db.MediaItems.Where(m => m.ServerId == server.Id), search);
 
         var counts = await query
             .GroupBy(m => m.Type)
@@ -127,6 +152,7 @@ public class LibraryController(FederationDbContext db) : ControllerBase
 
         var result = counts.ToDictionary(x => x.Type, x => x.Count);
         result["All"] = counts.Sum(x => x.Count);
+        LogMineCountsReturned(logger, server.Id, result["All"], search);
         return Ok(result);
     }
 
@@ -138,14 +164,19 @@ public class LibraryController(FederationDbContext db) : ControllerBase
         Guid itemId,
         [FromBody] SetRequestableRequest body)
     {
-        var server = GetServer();
+        var server = CurrentServer;
 
         var item = await db.MediaItems.FirstOrDefaultAsync(
             m => m.Id == itemId && m.ServerId == server.Id);
-        if (item is null) return NotFound();
+        if (item is null)
+        {
+            LogSetRequestableNotFound(logger, itemId, server.Id);
+            return NotFound();
+        }
 
         item.IsRequestable = body.IsRequestable;
         await db.SaveChangesAsync();
+        LogSetRequestableUpdated(logger, item.Id, server.Id, body.IsRequestable);
         return NoContent();
     }
 
@@ -161,7 +192,7 @@ public class LibraryController(FederationDbContext db) : ControllerBase
         [FromQuery] int pageSize = 100)
     {
         pageSize = Math.Min(pageSize, 500);
-        var server = GetServer();
+        var server = CurrentServer;
 
         var query = GetBrowsableItems(server, search, type)
             .Include(m => m.Server);
@@ -174,6 +205,7 @@ public class LibraryController(FederationDbContext db) : ControllerBase
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
             .ToListAsync();
+        LogBrowseReturned(logger, server.Id, total, page, pageSize, search, type);
 
         return Ok(items.Select(ToDto));
     }
@@ -185,7 +217,7 @@ public class LibraryController(FederationDbContext db) : ControllerBase
     public async Task<ActionResult<Dictionary<string, int>>> BrowseCounts(
         [FromQuery] string? search)
     {
-        var server = GetServer();
+        var server = CurrentServer;
 
         var query = GetBrowsableItems(server, search, type: null);
 
@@ -196,6 +228,7 @@ public class LibraryController(FederationDbContext db) : ControllerBase
 
         var result = counts.ToDictionary(x => x.Type, x => x.Count);
         result["All"] = counts.Sum(x => x.Count);
+        LogBrowseCountsReturned(logger, server.Id, result["All"], search);
         return Ok(result);
     }
 
@@ -213,18 +246,24 @@ public class LibraryController(FederationDbContext db) : ControllerBase
         var query = db.MediaItems
             .Where(m => allowedServerIds.Contains(m.ServerId) && m.IsRequestable);
 
-        if (!string.IsNullOrWhiteSpace(search))
-            query = query.Where(m => EF.Functions.Like(m.Title, $"%{EscapeLikePattern(search)}%", @"\"));
+        query = ApplyTitleSearch(query, search);
 
         if (!string.IsNullOrWhiteSpace(type) &&
             Enum.TryParse<MediaType>(type, ignoreCase: true, out var parsedType))
             query = query.Where(m => m.Type == parsedType);
+        else if (!string.IsNullOrWhiteSpace(type))
+            LogInvalidMediaTypeFilter(logger, type, "browse");
 
         return query;
     }
 
-    private RegisteredServer GetServer() =>
-        (RegisteredServer)HttpContext.Items["Server"]!;
+    private static IQueryable<MediaItem> ApplyTitleSearch(IQueryable<MediaItem> query, string? search)
+    {
+        if (string.IsNullOrWhiteSpace(search))
+            return query;
+
+        return query.Where(m => EF.Functions.Like(m.Title, $"%{EscapeLikePattern(search)}%", @"\"));
+    }
 
     private static string EscapeLikePattern(string input) =>
         input.Replace(@"\", @"\\").Replace("%", @"\%").Replace("_", @"\_").Replace("[", @"\[");

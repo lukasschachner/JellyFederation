@@ -1,9 +1,11 @@
 using JellyFederation.Plugin.Configuration;
+using JellyFederation.Shared.Telemetry;
 using JellyFederation.Shared.SignalR;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Sockets;
+using System.Diagnostics;
 
 namespace JellyFederation.Plugin.Services;
 
@@ -19,7 +21,7 @@ namespace JellyFederation.Plugin.Services;
 ///      while listening for an incoming probe — this punches through NAT.
 ///   5. Once a probe is received, hole is established; file transfer begins.
 /// </summary>
-public class HolePunchService(
+public partial class HolePunchService(
     ILogger<HolePunchService> logger,
     FileTransferService fileTransfer,
     IPluginConfigurationProvider configProvider)
@@ -27,6 +29,11 @@ public class HolePunchService(
     private const int ProbeIntervalMs = 200;
     private const int PunchTimeoutMs = 15_000;
     private const int ProbePayload = 0x4A46; // "JF" magic
+
+    // Temporary storage for sockets bound before HolePunchRequest arrives (owner side).
+    // Instance field (not static) because this service is registered as a singleton.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary
+        <Guid, (Socket Socket, string JellyfinItemId, bool IsSender)> _pendingSockets = new();
 
     /// <summary>
     /// Called when the owning server receives a FileRequestNotification.
@@ -40,11 +47,10 @@ public class HolePunchService(
 
         // Reuse existing socket if we already prepared for this request (reconnect scenario)
         int localPort;
-        if (PendingSockets.TryGetValue(notification.FileRequestId, out var existing))
+        if (_pendingSockets.TryGetValue(notification.FileRequestId, out var existing))
         {
             localPort = ((IPEndPoint)existing.Socket.LocalEndPoint!).Port;
-            logger.LogInformation("Reusing existing UDP socket on port {Port} for file request {Id}",
-                localPort, notification.FileRequestId);
+            LogReusingSocket(logger, localPort, notification.FileRequestId);
         }
         else
         {
@@ -56,15 +62,12 @@ public class HolePunchService(
             }
             catch (SocketException ex) when (bindPort != 0)
             {
-                logger.LogWarning(ex,
-                    "Configured port {Port} is already in use for request {Id} — falling back to ephemeral port",
-                    bindPort, notification.FileRequestId);
+                LogPortInUse(logger, ex, bindPort, notification.FileRequestId);
                 socket.Bind(new IPEndPoint(IPAddress.Any, 0));
             }
             localPort = ((IPEndPoint)socket.LocalEndPoint!).Port;
-            logger.LogInformation("Bound UDP socket on port {Port} for file request {Id}",
-                localPort, notification.FileRequestId);
-            PendingSockets[notification.FileRequestId] = (socket, notification.JellyfinItemId, notification.IsSender);
+            LogBoundSocket(logger, localPort, notification.FileRequestId);
+            _pendingSockets[notification.FileRequestId] = (socket, notification.JellyfinItemId, notification.IsSender);
         }
 
         var overrideIp = string.IsNullOrWhiteSpace(config.OverridePublicIp) ? null : config.OverridePublicIp;
@@ -78,11 +81,19 @@ public class HolePunchService(
     /// </summary>
     public async Task ExecuteAsync(HolePunchRequest request, HubConnection connection)
     {
+        var startedAt = Stopwatch.StartNew();
+        var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var activity = FederationTelemetry.PluginActivitySource.StartActivity(
+            FederationTelemetry.SpanSignalRWorkflow,
+            ActivityKind.Client);
+        FederationTelemetry.SetCommonTags(activity, "holepunch.execute", "plugin", correlationId, releaseVersion: FederationPlugin.ReleaseVersion);
+        using var inFlight = FederationMetrics.BeginInflight("holepunch.execute", "plugin", FederationPlugin.ReleaseVersion);
+
         Socket socket;
         string? jellyfinItemId = null;
         bool isSender = request.Role == HolePunchRole.Sender;
 
-        if (PendingSockets.TryRemove(request.FileRequestId, out var pending))
+        if (_pendingSockets.TryRemove(request.FileRequestId, out var pending))
         {
             socket = pending.Socket;
             jellyfinItemId = pending.JellyfinItemId;
@@ -91,7 +102,25 @@ public class HolePunchService(
         {
             // Receiver side: bind a fresh socket on the assigned local port
             socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            socket.Bind(new IPEndPoint(IPAddress.Any, request.LocalPort));
+            try
+            {
+                socket.Bind(new IPEndPoint(IPAddress.Any, request.LocalPort));
+            }
+            catch (SocketException ex)
+            {
+                LogBindFailed(logger, ex, request.LocalPort, request.FileRequestId);
+                socket.Dispose();
+                try
+                {
+                    await connection.SendAsync("ReportHolePunchResult",
+                        new HolePunchResult(request.FileRequestId, false, $"Port bind failed: {ex.Message}"));
+                }
+                catch (Exception sendEx)
+                {
+                    LogReportBindFailureFailed(logger, sendEx, request.FileRequestId);
+                }
+                return;
+            }
         }
 
         var parts = request.RemoteEndpoint.Split(':');
@@ -99,14 +128,14 @@ public class HolePunchService(
             !IPAddress.TryParse(parts[0], out var remoteIp) ||
             !int.TryParse(parts[1], out var remotePort))
         {
-            logger.LogError("Invalid remote endpoint: {Ep}", request.RemoteEndpoint);
+            LogInvalidEndpoint(logger, request.RemoteEndpoint);
             await connection.SendAsync("ReportHolePunchResult",
                 new HolePunchResult(request.FileRequestId, false, "Invalid remote endpoint"));
             return;
         }
 
         var remoteEp = new IPEndPoint(remoteIp, remotePort);
-        logger.LogInformation("Starting hole punch to {Ep} (role: {Role})", remoteEp, request.Role);
+        LogStartingHolePunch(logger, remoteEp, request.Role);
 
         using var cts = new CancellationTokenSource(PunchTimeoutMs);
         var probe = BitConverter.GetBytes(ProbePayload);
@@ -123,7 +152,7 @@ public class HolePunchService(
             cts.Cancel();   // stop sending probes now that hole is open
             try { await sendTask; } catch (OperationCanceledException) { }
 
-            logger.LogInformation("Hole punched successfully to {Ep}", remoteEp);
+            LogHolePunchSuccess(logger, remoteEp);
             await connection.SendAsync("ReportHolePunchResult",
                 new HolePunchResult(request.FileRequestId, true, null));
 
@@ -133,12 +162,15 @@ public class HolePunchService(
                 await fileTransfer.SendFileAsync(request.FileRequestId, jellyfinItemId, socket, remoteEp, config);
             else if (!isSender)
                 await fileTransfer.ReceiveFileAsync(request.FileRequestId, socket, remoteEp, config, connection);
+
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
+            FederationMetrics.RecordOperation("holepunch.execute", "plugin", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
         }
         catch (OperationCanceledException)
         {
             const string error = "Timed out. The peer may be behind symmetric NAT — "
                 + "port forwarding is required for direct transfers in this case.";
-            logger.LogWarning("Hole punch timed out for request {Id}", request.FileRequestId);
+            LogHolePunchTimeout(logger, request.FileRequestId);
             try
             {
                 await connection.SendAsync("ReportHolePunchResult",
@@ -146,9 +178,12 @@ public class HolePunchService(
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Failed to send HolePunchResult for request {Id} — connection may be closed", request.FileRequestId);
+                LogSendResultFailed(logger, ex, request.FileRequestId);
             }
             socket.Dispose();
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeTimeout);
+            FederationMetrics.RecordTimeout("holepunch.execute", "plugin", FederationPlugin.ReleaseVersion);
+            FederationMetrics.RecordOperation("holepunch.execute", "plugin", FederationTelemetry.OutcomeTimeout, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
         }
     }
 
@@ -173,10 +208,10 @@ public class HolePunchService(
             if (received == expectedProbe.Length &&
                 buffer.AsSpan(0, received).SequenceEqual(expectedProbe))
             {
-                logger.LogInformation("Received valid probe from {Ep} ({Bytes} bytes)", remoteEp, received);
+                LogProbeReceived(logger, remoteEp, received);
                 return;
             }
-            logger.LogDebug("Received {Bytes} bytes (not a valid probe)", received);
+            LogInvalidProbe(logger, received);
         }
     }
 
@@ -185,11 +220,7 @@ public class HolePunchService(
         // Cancel ongoing transfer (covers both send and receive)
         fileTransfer.Cancel(fileRequestId);
         // Clean up any pending socket waiting for HolePunchRequest
-        if (PendingSockets.TryRemove(fileRequestId, out var pending))
+        if (_pendingSockets.TryRemove(fileRequestId, out var pending))
             pending.Socket.Dispose();
     }
-
-    // Temporary storage for sockets bound before HolePunchRequest arrives (owner side)
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary
-        <Guid, (Socket Socket, string JellyfinItemId, bool IsSender)> PendingSockets = new();
 }
