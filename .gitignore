@@ -24,3 +24,6 @@ docker
 .github/prompts
 **/bin/
 **/obj/
+src/JellyFederation.Server/federation.db
+src/JellyFederation.Server/federation.db-shm
+src/JellyFederation.Server/federation.db-wal
