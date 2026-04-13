@@ -13,5 +13,9 @@ public record FileRequestDto(
     string JellyfinItemId,
     string? ItemTitle,
     FileRequestStatus Status,
+    TransferTransportMode? SelectedTransportMode,
+    TransferFailureCategory? FailureCategory,
+    long BytesTransferred,
+    long? TotalBytes,
     string? FailureReason,
     DateTime CreatedAt);

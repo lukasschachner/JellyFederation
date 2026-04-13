@@ -37,7 +37,11 @@ public partial class FileRequestNotifier(
         var update = new FileRequestStatusUpdate(
             request.Id,
             request.Status.ToString(),
-            request.FailureReason);
+            request.FailureReason,
+            request.SelectedTransportMode,
+            request.FailureCategory,
+            request.BytesTransferred,
+            request.TotalBytes);
 
         var senderConn = tracker.GetConnectionId(request.OwningServerId);
         var receiverConn = tracker.GetConnectionId(request.RequestingServerId);
@@ -95,7 +99,14 @@ public partial class FileRequestNotifier(
 
         LogSendCancel(logger, request.Id, request.OwningServerId, request.RequestingServerId);
         var cancelMsg = new CancelTransfer(request.Id);
-        var statusUpdate = new FileRequestStatusUpdate(request.Id, "Cancelled", null);
+        var statusUpdate = new FileRequestStatusUpdate(
+            request.Id,
+            "Cancelled",
+            null,
+            request.SelectedTransportMode,
+            TransferFailureCategory.Cancelled,
+            request.BytesTransferred,
+            request.TotalBytes);
 
         var ownerConn = tracker.GetConnectionId(request.OwningServerId);
         if (ownerConn is not null)

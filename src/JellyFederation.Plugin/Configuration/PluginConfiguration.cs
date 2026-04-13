@@ -29,6 +29,15 @@ public class PluginConfiguration : BasePluginConfiguration
     /// so you can port-forward it. 0 = ephemeral (auto).
     /// </summary>
     public int HolePunchPort { get; set; } = 0;
+    /// <summary>
+    /// Prefer QUIC for large files when both peers support it.
+    /// If disabled, all transfers stay on ARQ-over-UDP.
+    /// </summary>
+    public bool PreferQuicForLargeFiles { get; set; } = true;
+    /// <summary>
+    /// Transfers at or above this size are considered large-file QUIC candidates.
+    /// </summary>
+    public long LargeFileQuicThresholdBytes { get; set; } = 512L * 1024 * 1024;
 
     public string TelemetryServiceName { get; set; } = "jellyfederation-plugin";
     public string TelemetryOtlpEndpoint { get; set; } = "http://localhost:4317";

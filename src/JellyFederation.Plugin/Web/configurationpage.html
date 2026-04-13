@@ -112,6 +112,25 @@
                         </div>
                     </div>
 
+                    <div class="checkboxContainer">
+                        <label>
+                            <input id="preferQuicForLargeFiles" name="PreferQuicForLargeFiles" type="checkbox" is="emby-checkbox" />
+                            <span>Prefer QUIC for large files (when supported by both peers)</span>
+                        </label>
+                    </div>
+
+                    <div class="inputContainer">
+                        <label class="inputLabel inputLabelUnfocused" for="largeFileQuicThresholdBytes">
+                            Large File QUIC Threshold (bytes)
+                        </label>
+                        <input id="largeFileQuicThresholdBytes" name="LargeFileQuicThresholdBytes"
+                               type="number" min="1" is="emby-input"
+                               placeholder="536870912" />
+                        <div class="fieldDescription">
+                            Files at or above this size are eligible for QUIC if both peers advertise support.
+                        </div>
+                    </div>
+
                     <div>
                         <button is="emby-button" type="submit" class="raised button-submit block">
                             <span>Save</span>
@@ -139,6 +158,8 @@
                     document.querySelector('#downloadDirectory').value = config.DownloadDirectory || '';
                     document.querySelector('#overridePublicIp').value = config.OverridePublicIp || '';
                     document.querySelector('#holePunchPort').value = config.HolePunchPort || 0;
+                    document.querySelector('#preferQuicForLargeFiles').checked = config.PreferQuicForLargeFiles !== false;
+                    document.querySelector('#largeFileQuicThresholdBytes').value = config.LargeFileQuicThresholdBytes || 536870912;
                     Dashboard.hideLoadingMsg();
                 }).catch(function (err) {
                     console.error('[JellyFederation] Failed to load config:', err);
@@ -161,6 +182,11 @@
 
                     var parsedPort = parseInt(form.querySelector('#holePunchPort').value, 10);
                     config.HolePunchPort = Number.isFinite(parsedPort) && parsedPort >= 0 ? parsedPort : 0;
+                    config.PreferQuicForLargeFiles = !!form.querySelector('#preferQuicForLargeFiles').checked;
+                    var parsedThreshold = parseInt(form.querySelector('#largeFileQuicThresholdBytes').value, 10);
+                    config.LargeFileQuicThresholdBytes = Number.isFinite(parsedThreshold) && parsedThreshold > 0
+                        ? parsedThreshold
+                        : 536870912;
 
                     return ApiClient.updatePluginConfiguration(self.pluginId, config);
                 }).then(function (result) {

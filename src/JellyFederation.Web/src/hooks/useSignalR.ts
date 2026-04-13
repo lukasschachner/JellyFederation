@@ -8,6 +8,10 @@ export interface FileRequestUpdate {
   fileRequestId: string
   status: string
   failureReason: string | null
+  selectedTransportMode?: 'ArqUdp' | 'Quic' | null
+  failureCategory?: 'Timeout' | 'Connectivity' | 'Reliability' | 'Cancelled' | 'Unknown' | null
+  bytesTransferred?: number | null
+  totalBytes?: number | null
 }
 
 export interface TransferProgress {

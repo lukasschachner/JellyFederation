@@ -78,6 +78,19 @@ Plugin (`PluginConfiguration`):
 - `TelemetrySamplingRatio` (default: `1.0`)
 - `EnableTracing` / `EnableMetrics` / `EnableLogs` / `RedactionEnabled`
 
+## Large-file transport selection
+
+The plugin now advertises transfer transport capabilities during hole-punch readiness:
+
+- `PreferQuicForLargeFiles` (default: `true`) enables QUIC preference for eligible large files.
+- `LargeFileQuicThresholdBytes` (default: `536870912`) controls the size threshold used for QUIC selection.
+
+Server-side mode selection is deterministic per request:
+
+1. Select `Quic` only when both peers advertise QUIC support and file size meets threshold.
+2. Otherwise use `ArqUdp`.
+3. Record selected mode, selection reason, transfer progress bytes, and failure category in file request state.
+
 ## Reliability trend and incident triage
 
 1. Capture a baseline for `operations.total`, `operation.duration`, `timeouts.total`, `retries.total`, and `inflight`.

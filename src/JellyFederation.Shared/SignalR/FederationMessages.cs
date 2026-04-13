@@ -1,3 +1,5 @@
+using JellyFederation.Shared.Models;
+
 namespace JellyFederation.Shared.SignalR;
 
 /// <summary>
@@ -9,7 +11,9 @@ public record HolePunchRequest(
     Guid FileRequestId,
     string RemoteEndpoint,   // "ip:port" of the peer to punch through to
     int LocalPort,           // UDP port the peer should bind on their side
-    HolePunchRole Role);
+    HolePunchRole Role,
+    TransferTransportMode SelectedTransportMode = TransferTransportMode.ArqUdp,
+    TransferSelectionReason TransportSelectionReason = TransferSelectionReason.DefaultArq);
 
 public enum HolePunchRole
 {
@@ -25,7 +29,9 @@ public enum HolePunchRole
 public record HolePunchReady(
     Guid FileRequestId,
     int UdpPort,                   // The port this plugin bound locally
-    string? OverridePublicIp = null); // Optional: override the IP the server uses for this peer
+    string? OverridePublicIp = null, // Optional: override the IP the server uses for this peer
+    bool SupportsQuic = false,
+    long LargeFileThresholdBytes = 0);
 
 /// <summary>
 /// Sent by a plugin to the federation server to report hole punch outcome.
@@ -52,7 +58,11 @@ public record FileRequestNotification(
 public record FileRequestStatusUpdate(
     Guid FileRequestId,
     string Status,
-    string? FailureReason);
+    string? FailureReason,
+    TransferTransportMode? SelectedTransportMode = null,
+    TransferFailureCategory? FailureCategory = null,
+    long? BytesTransferred = null,
+    long? TotalBytes = null);
 
 /// <summary>
 /// Sent by the receiving plugin to the federation server to report transfer progress.

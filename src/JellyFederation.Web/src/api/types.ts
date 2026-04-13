@@ -1,6 +1,8 @@
 export type MediaType = 'Movie' | 'Series' | 'Episode' | 'Music' | 'Other'
 export type InvitationStatus = 'Pending' | 'Accepted' | 'Declined' | 'Revoked'
 export type FileRequestStatus = 'Pending' | 'HolePunching' | 'Transferring' | 'Completed' | 'Failed' | 'Cancelled'
+export type TransferTransportMode = 'ArqUdp' | 'Quic'
+export type TransferFailureCategory = 'Timeout' | 'Connectivity' | 'Reliability' | 'Cancelled' | 'Unknown'
 
 export interface ServerInfo {
   id: string
@@ -44,6 +46,10 @@ export interface FileRequest {
   jellyfinItemId: string
   itemTitle: string | null
   status: FileRequestStatus
+  selectedTransportMode: TransferTransportMode | null
+  failureCategory: TransferFailureCategory | null
+  bytesTransferred: number
+  totalBytes: number | null
   failureReason: string | null
   createdAt: string
 }

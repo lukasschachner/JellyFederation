@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using System.Net;
 using System.Net.Sockets;
 using System.Diagnostics;
+using System.Net.Quic;
 
 namespace JellyFederation.Plugin.Services;
 
@@ -65,14 +66,29 @@ public partial class HolePunchService(
                 LogPortInUse(logger, ex, bindPort, notification.FileRequestId);
                 socket.Bind(new IPEndPoint(IPAddress.Any, 0));
             }
+
             localPort = ((IPEndPoint)socket.LocalEndPoint!).Port;
             LogBoundSocket(logger, localPort, notification.FileRequestId);
             _pendingSockets[notification.FileRequestId] = (socket, notification.JellyfinItemId, notification.IsSender);
         }
 
         var overrideIp = string.IsNullOrWhiteSpace(config.OverridePublicIp) ? null : config.OverridePublicIp;
+        var quicSupported = QuicConnection.IsSupported;
+        var supportsQuic = config.PreferQuicForLargeFiles && quicSupported;
+        var threshold = config.LargeFileQuicThresholdBytes > 0
+            ? config.LargeFileQuicThresholdBytes
+            : 512L * 1024 * 1024;
+        LogHolePunchReadinessCapabilities(
+            logger,
+            notification.FileRequestId,
+            config.PreferQuicForLargeFiles,
+            quicSupported,
+            supportsQuic,
+            threshold,
+            localPort,
+            overrideIp ?? "(auto)");
         await connection.SendAsync("ReportHolePunchReady",
-            new HolePunchReady(notification.FileRequestId, localPort, overrideIp));
+            new HolePunchReady(notification.FileRequestId, localPort, overrideIp, supportsQuic, threshold));
     }
 
     /// <summary>
@@ -86,8 +102,10 @@ public partial class HolePunchService(
         using var activity = FederationTelemetry.PluginActivitySource.StartActivity(
             FederationTelemetry.SpanSignalRWorkflow,
             ActivityKind.Client);
-        FederationTelemetry.SetCommonTags(activity, "holepunch.execute", "plugin", correlationId, releaseVersion: FederationPlugin.ReleaseVersion);
-        using var inFlight = FederationMetrics.BeginInflight("holepunch.execute", "plugin", FederationPlugin.ReleaseVersion);
+        FederationTelemetry.SetCommonTags(activity, "holepunch.execute", "plugin", correlationId,
+            releaseVersion: FederationPlugin.ReleaseVersion);
+        using var inFlight =
+            FederationMetrics.BeginInflight("holepunch.execute", "plugin", FederationPlugin.ReleaseVersion);
 
         Socket socket;
         string? jellyfinItemId = null;
@@ -119,6 +137,7 @@ public partial class HolePunchService(
                 {
                     LogReportBindFailureFailed(logger, sendEx, request.FileRequestId);
                 }
+
                 return;
             }
         }
@@ -149,8 +168,14 @@ public partial class HolePunchService(
             var recvTask = WaitForProbeAsync(socket, probe, remoteEp, cts.Token);
 
             await recvTask; // throws OperationCanceledException if 15s elapses
-            cts.Cancel();   // stop sending probes now that hole is open
-            try { await sendTask; } catch (OperationCanceledException) { }
+            await cts.CancelAsync(); // stop sending probes now that hole is open
+            try
+            {
+                await sendTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
 
             LogHolePunchSuccess(logger, remoteEp);
             await connection.SendAsync("ReportHolePunchResult",
@@ -158,18 +183,40 @@ public partial class HolePunchService(
 
             // Hand off to file transfer
             var config = configProvider.GetConfiguration();
-            if (isSender && jellyfinItemId is not null)
-                await fileTransfer.SendFileAsync(request.FileRequestId, jellyfinItemId, socket, remoteEp, config);
-            else if (!isSender)
-                await fileTransfer.ReceiveFileAsync(request.FileRequestId, socket, remoteEp, config, connection);
+            LogTransportMode(logger, request.FileRequestId, request.SelectedTransportMode,
+                request.TransportSelectionReason);
+            switch (isSender)
+            {
+                case true when jellyfinItemId is not null:
+                    await fileTransfer.SendFileAsync(
+                        request.FileRequestId,
+                        jellyfinItemId,
+                        socket,
+                        remoteEp,
+                        config,
+                        request.SelectedTransportMode,
+                        request.TransportSelectionReason);
+                    break;
+                case false:
+                    await fileTransfer.ReceiveFileAsync(
+                        request.FileRequestId,
+                        socket,
+                        remoteEp,
+                        config,
+                        connection,
+                        request.SelectedTransportMode,
+                        request.TransportSelectionReason);
+                    break;
+            }
 
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
-            FederationMetrics.RecordOperation("holepunch.execute", "plugin", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+            FederationMetrics.RecordOperation("holepunch.execute", "plugin", FederationTelemetry.OutcomeSuccess,
+                startedAt.Elapsed, FederationPlugin.ReleaseVersion);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
             const string error = "Timed out. The peer may be behind symmetric NAT — "
-                + "port forwarding is required for direct transfers in this case.";
+                                 + "port forwarding is required for direct transfers in this case.";
             LogHolePunchTimeout(logger, request.FileRequestId);
             try
             {
@@ -180,10 +227,53 @@ public partial class HolePunchService(
             {
                 LogSendResultFailed(logger, ex, request.FileRequestId);
             }
+
             socket.Dispose();
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeTimeout);
             FederationMetrics.RecordTimeout("holepunch.execute", "plugin", FederationPlugin.ReleaseVersion);
-            FederationMetrics.RecordOperation("holepunch.execute", "plugin", FederationTelemetry.OutcomeTimeout, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+            FederationMetrics.RecordOperation("holepunch.execute", "plugin", FederationTelemetry.OutcomeTimeout,
+                startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+        }
+        catch (OperationCanceledException ex)
+        {
+            LogUnexpectedCancellation(logger, ex, request.FileRequestId);
+            try
+            {
+                await connection.SendAsync("ReportHolePunchResult",
+                    new HolePunchResult(request.FileRequestId, false,
+                        "Transfer was cancelled after hole punch. Check peer connectivity and retry."));
+            }
+            catch (Exception sendEx)
+            {
+                LogSendResultFailed(logger, sendEx, request.FileRequestId);
+            }
+
+            socket.Dispose();
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeCancelled);
+            FederationMetrics.RecordOperation("holepunch.execute", "plugin", FederationTelemetry.OutcomeCancelled,
+                startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+        }
+        catch (Exception ex)
+        {
+            LogTransferExecutionFailed(logger, ex, request.FileRequestId);
+            try
+            {
+                await connection.SendAsync("ReportHolePunchResult",
+                    new HolePunchResult(
+                        request.FileRequestId,
+                        false,
+                        $"Transfer execution failed: {ex.Message}"));
+            }
+            catch (Exception sendEx)
+            {
+                LogSendResultFailed(logger, sendEx, request.FileRequestId);
+            }
+
+            socket.Dispose();
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError, ex);
+            FederationMetrics.RecordOperation("holepunch.execute", "plugin", FederationTelemetry.OutcomeError,
+                startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+            throw;
         }
     }
 
@@ -192,8 +282,15 @@ public partial class HolePunchService(
     {
         while (!ct.IsCancellationRequested)
         {
-            try { await socket.SendToAsync(probe, SocketFlags.None, remote, ct); }
-            catch (SocketException) { /* remote not yet reachable — keep trying */ }
+            try
+            {
+                await socket.SendToAsync(probe, SocketFlags.None, remote, ct);
+            }
+            catch (SocketException)
+            {
+                /* remote not yet reachable — keep trying */
+            }
+
             await Task.Delay(ProbeIntervalMs, ct);
         }
     }
@@ -211,6 +308,7 @@ public partial class HolePunchService(
                 LogProbeReceived(logger, remoteEp, received);
                 return;
             }
+
             LogInvalidProbe(logger, received);
         }
     }

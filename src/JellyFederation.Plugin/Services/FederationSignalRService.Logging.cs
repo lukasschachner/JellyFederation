@@ -24,8 +24,14 @@ public partial class FederationSignalRService
     [LoggerMessage(5, LogLevel.Error, "PrepareAndSignalReadyAsync failed for request {Id}")]
     private static partial void LogPrepareAndSignalReadyFailed(ILogger logger, Exception ex, Guid id);
 
-    [LoggerMessage(6, LogLevel.Information, "File request {Id} status: {Status} {Reason}")]
-    private static partial void LogFileRequestStatus(ILogger logger, Guid id, string status, string reason);
+    [LoggerMessage(6, LogLevel.Information, "File request {Id} status: {Status} {Reason} (mode={Mode}, failureCategory={FailureCategory})")]
+    private static partial void LogFileRequestStatus(
+        ILogger logger,
+        Guid id,
+        string status,
+        string reason,
+        string mode,
+        string failureCategory);
 
     [LoggerMessage(7, LogLevel.Information, "Cancelling transfer for request {Id}")]
     private static partial void LogCancellingTransfer(ILogger logger, Guid id);

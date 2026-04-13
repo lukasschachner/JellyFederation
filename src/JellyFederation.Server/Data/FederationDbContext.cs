@@ -46,6 +46,7 @@ public class FederationDbContext(DbContextOptions<FederationDbContext> options) 
              .WithMany()
              .HasForeignKey(r => r.OwningServerId)
              .OnDelete(DeleteBehavior.Restrict);
+            e.Property(r => r.BytesTransferred).HasDefaultValue(0L);
         });
     }
 }

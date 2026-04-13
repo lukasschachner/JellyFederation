@@ -48,10 +48,13 @@ function RequestRow({
   onCancel: (id: string) => void
   cancelling: boolean
 }) {
-  const isIncoming = req.owningServerId === myServerId
+  const isIncoming = req.owningServerId.toLowerCase() === myServerId.toLowerCase()
   const peerName = isIncoming ? req.requestingServerName : req.owningServerName
   const pct = progress && progress.totalBytes > 0
     ? Math.min(100, Math.round((progress.bytesReceived / progress.totalBytes) * 100))
+    : null
+  const persistedPct = req.totalBytes && req.totalBytes > 0
+    ? Math.min(100, Math.round((req.bytesTransferred / req.totalBytes) * 100))
     : null
   const canCancel = cancellableStatuses.includes(req.status)
 
@@ -72,6 +75,15 @@ function RequestRow({
           <span className="text-[var(--color-heading)]">{peerName}</span>
           {' · '}{formatDateTime(req.createdAt)}
         </p>
+        <p className="text-xs text-[var(--color-text)] mt-1">
+          Mode: <span className="text-[var(--color-heading)]">{req.selectedTransportMode ?? 'n/a'}</span>
+          {req.failureCategory ? (
+            <>
+              {' · '}Failure Category:{' '}
+              <span className="text-[var(--color-heading)]">{req.failureCategory}</span>
+            </>
+          ) : null}
+        </p>
         {req.status === 'Transferring' && pct !== null && (
           <div className="mt-2">
             <div className="flex justify-between text-xs text-[var(--color-text)] mb-1">
@@ -85,6 +97,11 @@ function RequestRow({
               />
             </div>
           </div>
+        )}
+        {req.status !== 'Transferring' && persistedPct !== null && req.totalBytes !== null && (
+          <p className="text-xs text-[var(--color-text)] mt-2">
+            Progress snapshot: {persistedPct}% ({formatBytes(req.bytesTransferred)} / {formatBytes(req.totalBytes)})
+          </p>
         )}
         {req.failureReason && (
           <p className="text-xs text-red-400 mt-2 leading-relaxed">{req.failureReason}</p>

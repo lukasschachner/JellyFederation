@@ -3,6 +3,7 @@ using System;
 using JellyFederation.Server.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace JellyFederation.Server.Migrations
 {
     [DbContext(typeof(FederationDbContext))]
-    partial class FederationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260412194109_AddTransferTransportMetadata")]
+    partial class AddTransferTransportMetadata
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "9.0.5");
@@ -23,19 +26,11 @@ namespace JellyFederation.Server.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
-                    b.Property<long>("BytesTransferred")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER")
-                        .HasDefaultValue(0L);
-
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("TEXT");
-
-                    b.Property<int?>("FailureCategory")
-                        .HasColumnType("INTEGER");
 
                     b.Property<string>("FailureReason")
                         .HasColumnType("TEXT");
@@ -50,19 +45,7 @@ namespace JellyFederation.Server.Migrations
                     b.Property<Guid>("RequestingServerId")
                         .HasColumnType("TEXT");
 
-                    b.Property<int?>("SelectedTransportMode")
-                        .HasColumnType("INTEGER");
-
                     b.Property<int>("Status")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long?>("TotalBytes")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime?>("TransferStartedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int?>("TransportSelectionReason")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
