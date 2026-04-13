@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Net;
+using JellyFederation.Shared.Models;
 using JellyFederation.Shared.Telemetry;
 using Microsoft.Extensions.Logging;
 
@@ -81,9 +82,12 @@ public partial class ServerConnectionTracker(ILogger<ServerConnectionTracker> lo
         Guid serverId,
         string connectionId,
         int udpPort,
+        bool supportsQuic,
+        long largeFileThresholdBytes,
         out HolePunchCandidate[] candidates)
     {
-        var entry = new HolePunchCandidate(serverId, connectionId, udpPort);
+        var threshold = largeFileThresholdBytes > 0 ? largeFileThresholdBytes : long.MaxValue;
+        var entry = new HolePunchCandidate(serverId, connectionId, udpPort, supportsQuic, threshold);
 
         candidates = _holePunchStaging.AddOrUpdate(
             fileRequestId,
@@ -108,4 +112,13 @@ public partial class ServerConnectionTracker(ILogger<ServerConnectionTracker> lo
     }
 }
 
-public record HolePunchCandidate(Guid ServerId, string ConnectionId, int UdpPort);
+public record HolePunchCandidate(
+    Guid ServerId,
+    string ConnectionId,
+    int UdpPort,
+    bool SupportsQuic,
+    long LargeFileThresholdBytes);
+
+public readonly record struct TransferSelection(
+    TransferTransportMode Mode,
+    TransferSelectionReason Reason);

@@ -26,6 +26,7 @@ export function Invitations() {
   const qc = useQueryClient()
   const [newServerId, setNewServerId] = useState('')
   const [sendError, setSendError] = useState('')
+  const myServerId = cfg?.serverId?.toLowerCase() ?? ''
 
   const { data: invitations, isLoading } = useQuery({
     queryKey: ['invitations'],
@@ -53,8 +54,8 @@ export function Invitations() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['invitations'] }),
   })
 
-  const received = invitations?.filter(i => i.toServerId === cfg?.serverId) ?? []
-  const sent = invitations?.filter(i => i.fromServerId === cfg?.serverId) ?? []
+  const received = invitations?.filter(i => i.toServerId.toLowerCase() === myServerId) ?? []
+  const sent = invitations?.filter(i => i.fromServerId.toLowerCase() === myServerId) ?? []
 
   return (
     <div className="max-w-3xl">

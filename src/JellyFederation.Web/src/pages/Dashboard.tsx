@@ -33,11 +33,12 @@ function CopyButton({ value }: { value: string }) {
 
 export function Dashboard({ connectionState }: DashboardProps) {
   const cfg = useConfig()
+  const myServerId = cfg?.serverId?.toLowerCase() ?? ''
   const { data: libraryCounts } = useQuery({ queryKey: ['library-counts'], queryFn: () => libraryApi.browseCounts() })
   const { data: invitations } = useQuery({ queryKey: ['invitations'], queryFn: invitationsApi.list })
   const { data: requests } = useQuery({ queryKey: ['requests'], queryFn: fileRequestsApi.list })
 
-  const pendingInvitations = invitations?.filter(i => i.status === 'Pending' && i.toServerId === cfg?.serverId) ?? []
+  const pendingInvitations = invitations?.filter(i => i.status === 'Pending' && i.toServerId.toLowerCase() === myServerId) ?? []
   const activeRequests = requests?.filter(r => r.status === 'Pending' || r.status === 'HolePunching' || r.status === 'Transferring') ?? []
 
   const stats = [

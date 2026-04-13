@@ -59,7 +59,13 @@ public partial class FederationSignalRService(
 
         _connection.On<FileRequestStatusUpdate>("FileRequestStatusUpdate", update =>
         {
-            LogFileRequestStatus(logger, update.FileRequestId, update.Status, update.FailureReason ?? string.Empty);
+            LogFileRequestStatus(
+                logger,
+                update.FileRequestId,
+                update.Status,
+                update.FailureReason ?? string.Empty,
+                update.SelectedTransportMode?.ToString() ?? "n/a",
+                update.FailureCategory?.ToString() ?? "n/a");
         });
 
         _connection.On<CancelTransfer>("CancelTransfer", msg =>

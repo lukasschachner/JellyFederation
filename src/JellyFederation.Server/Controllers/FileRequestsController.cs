@@ -167,6 +167,8 @@ public partial class FileRequestsController(
         }
 
         request.Status = FileRequestStatus.Cancelled;
+        request.FailureCategory = TransferFailureCategory.Cancelled;
+        request.FailureReason = null;
         await db.SaveChangesAsync();
 
         await notifier.SendCancelAsync(request);
@@ -215,6 +217,8 @@ public partial class FileRequestsController(
 
         request.Status = FileRequestStatus.Completed;
         request.CompletedAt = DateTime.UtcNow;
+        request.FailureCategory = null;
+        request.FailureReason = null;
         await db.SaveChangesAsync();
 
         await notifier.NotifyStatusAsync(request);
@@ -227,8 +231,14 @@ public partial class FileRequestsController(
 
     private static FileRequestDto ToDto(FileRequest r, string? itemTitle = null) =>
         new(r.Id,
-            r.RequestingServerId, r.RequestingServer?.Name ?? "",
-            r.OwningServerId, r.OwningServer?.Name ?? "",
+            r.RequestingServerId, r.RequestingServer.Name,
+            r.OwningServerId, r.OwningServer.Name,
             r.JellyfinItemId, itemTitle,
-            r.Status, r.FailureReason, r.CreatedAt);
+            r.Status,
+            r.SelectedTransportMode,
+            r.FailureCategory,
+            r.BytesTransferred,
+            r.TotalBytes,
+            r.FailureReason,
+            r.CreatedAt);
 }

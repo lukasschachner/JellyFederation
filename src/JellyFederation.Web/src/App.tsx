@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { loadConfig } from './lib/config'
@@ -26,6 +26,14 @@ function AppInner() {
     onFileRequestUpdate: (update) => setLatestUpdate(update),
     onTransferProgress: (progress) => setLatestProgress(progress),
   })
+
+  useEffect(() => {
+    function handleAuthInvalid() {
+      setConfigured(false)
+    }
+    window.addEventListener('jf-auth-invalid', handleAuthInvalid)
+    return () => window.removeEventListener('jf-auth-invalid', handleAuthInvalid)
+  }, [])
 
   if (!configured) {
     return <Setup onComplete={() => setConfigured(true)} />

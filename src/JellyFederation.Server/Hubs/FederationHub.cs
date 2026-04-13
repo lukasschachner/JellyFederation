@@ -160,6 +160,13 @@ public partial class FederationHub(
             }
 
             LogHolePunchReady(logger, serverId.Value, message.FileRequestId, message.UdpPort);
+            LogHolePunchCapabilities(
+                logger,
+                serverId.Value,
+                message.FileRequestId,
+                message.SupportsQuic,
+                message.LargeFileThresholdBytes,
+                string.IsNullOrWhiteSpace(message.OverridePublicIp) ? "(auto)" : message.OverridePublicIp);
 
             // Use plugin-supplied override IP if provided (e.g. Docker/NAT scenarios)
             if (!string.IsNullOrWhiteSpace(message.OverridePublicIp) &&
@@ -174,6 +181,8 @@ public partial class FederationHub(
                 serverId.Value,
                 Context.ConnectionId,
                 message.UdpPort,
+                message.SupportsQuic,
+                message.LargeFileThresholdBytes,
                 out var candidates))
             {
                 await DispatchHolePunch(request, candidates);
@@ -215,11 +224,14 @@ public partial class FederationHub(
         if (result.Success)
         {
             request.Status = FileRequestStatus.Transferring;
+            request.TransferStartedAt = DateTime.UtcNow;
+            request.FailureCategory = null;
             LogTransferStarted(logger, result.FileRequestId);
         }
         else
         {
             request.Status = FileRequestStatus.Failed;
+            request.FailureCategory = TransferFailureCategory.Connectivity;
             request.FailureReason = $"Hole punch failed: {result.Error}. "
                 + "The server may be behind symmetric NAT. Consider configuring port forwarding.";
             LogHolePunchMarkedFailed(logger, result.FileRequestId, request.FailureReason);
@@ -255,6 +267,10 @@ public partial class FederationHub(
             return;
         }
 
+        var selection = await SelectTransportModeAsync(request, sender, receiver);
+        request.SelectedTransportMode = selection.Mode;
+        request.TransportSelectionReason = selection.Reason;
+
         request.Status = FileRequestStatus.HolePunching;
         await db.SaveChangesAsync();
 
@@ -265,7 +281,9 @@ public partial class FederationHub(
                 request.Id,
                 RemoteEndpoint: $"{receiverIp}:{receiver.UdpPort}",
                 LocalPort: sender.UdpPort,
-                Role: HolePunchRole.Sender));
+                Role: HolePunchRole.Sender,
+                SelectedTransportMode: selection.Mode,
+                TransportSelectionReason: selection.Reason));
 
         // Tell receiver: punch to sender's public UDP endpoint
         await Clients.Client(receiver.ConnectionId).SendAsync(
@@ -274,9 +292,42 @@ public partial class FederationHub(
                 request.Id,
                 RemoteEndpoint: $"{senderIp}:{sender.UdpPort}",
                 LocalPort: receiver.UdpPort,
-                Role: HolePunchRole.Receiver));
+                Role: HolePunchRole.Receiver,
+                SelectedTransportMode: selection.Mode,
+                TransportSelectionReason: selection.Reason));
 
         LogHolePunchInitiated(logger, request.Id, senderIp, sender.UdpPort, receiverIp, receiver.UdpPort);
+        LogTransportModeSelected(logger, request.Id, selection.Mode, selection.Reason);
+        FederationMetrics.RecordOperation(
+            $"file.transfer.mode.{selection.Mode.ToString().ToLowerInvariant()}",
+            "server",
+            "selected",
+            TimeSpan.Zero);
+    }
+
+    private async Task<TransferSelection> SelectTransportModeAsync(
+        FileRequest request,
+        HolePunchCandidate sender,
+        HolePunchCandidate receiver)
+    {
+        if (!sender.SupportsQuic || !receiver.SupportsQuic)
+            return new(TransferTransportMode.ArqUdp, TransferSelectionReason.QuicUnsupportedPeer);
+
+        var item = await db.MediaItems
+            .Where(m => m.ServerId == request.OwningServerId && m.JellyfinItemId == request.JellyfinItemId)
+            .Select(m => new { m.FileSizeBytes })
+            .FirstOrDefaultAsync();
+
+        if (item is null)
+            return new(TransferTransportMode.ArqUdp, TransferSelectionReason.NegotiationFailed);
+
+        request.TotalBytes = item.FileSizeBytes;
+
+        var threshold = Math.Max(sender.LargeFileThresholdBytes, receiver.LargeFileThresholdBytes);
+        if (item.FileSizeBytes >= threshold)
+            return new(TransferTransportMode.Quic, TransferSelectionReason.LargeFileQuic);
+
+        return new(TransferTransportMode.ArqUdp, TransferSelectionReason.DefaultArq);
     }
 
     /// <summary>
@@ -290,6 +341,10 @@ public partial class FederationHub(
             LogTransferProgressRequestNotFound(logger, progress.FileRequestId, progress.BytesReceived, progress.TotalBytes);
             return;
         }
+
+        request.BytesTransferred = progress.BytesReceived;
+        request.TotalBytes = progress.TotalBytes;
+        await db.SaveChangesAsync();
 
         // Forward to browser clients watching either server
         await Clients.Group($"server:{request.OwningServerId}").SendAsync("TransferProgress", progress);

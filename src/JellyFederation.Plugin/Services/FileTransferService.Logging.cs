@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using System.Net;
+using JellyFederation.Shared.Models;
 using JellyFederation.Shared.Telemetry;
 using System.Diagnostics;
 
@@ -75,4 +76,29 @@ public partial class FileTransferService
 
     [LoggerMessage(21, LogLevel.Debug, "ACK timeout for seq {Seq}, retrying ({Attempt}/{Max})")]
     private static partial void LogAckTimeout(ILogger logger, uint seq, int attempt, int max);
+
+    [LoggerMessage(22, LogLevel.Information, "Transfer {Id} mode {Mode} selected ({Reason})")]
+    private static partial void LogTransferMode(
+        ILogger logger,
+        Guid id,
+        TransferTransportMode mode,
+        TransferSelectionReason reason);
+
+    [LoggerMessage(23, LogLevel.Warning, "QUIC selected for send {Id} but falling back to ARQ ({Reason})")]
+    private static partial void LogQuicFallbackBeforeSend(
+        ILogger logger,
+        Guid id,
+        TransferSelectionReason reason);
+
+    [LoggerMessage(24, LogLevel.Warning, "QUIC selected for receive {Id} but falling back to ARQ ({Reason})")]
+    private static partial void LogQuicFallbackBeforeReceive(
+        ILogger logger,
+        Guid id,
+        TransferSelectionReason reason);
+
+    [LoggerMessage(25, LogLevel.Warning, "QUIC transfer for {Id} failed; falling back to ARQ. Reason: {Reason}")]
+    private static partial void LogQuicRuntimeFallback(
+        ILogger logger,
+        Guid id,
+        string reason);
 }

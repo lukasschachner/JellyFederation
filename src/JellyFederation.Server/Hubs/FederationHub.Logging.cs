@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using System.Net;
+using JellyFederation.Shared.Models;
 using JellyFederation.Shared.Telemetry;
 using System.Diagnostics;
 
@@ -30,6 +31,16 @@ public partial class FederationHub
 
     [LoggerMessage(7, LogLevel.Information, "ReportHolePunchReady from server {ServerId} for request {RequestId} on port {Port}")]
     private static partial void LogHolePunchReady(ILogger logger, Guid serverId, Guid requestId, int port);
+
+    [LoggerMessage(25, LogLevel.Information,
+        "Hole punch capabilities from {ServerId} for request {RequestId}: supportsQuic={SupportsQuic}, thresholdBytes={ThresholdBytes}, overridePublicIp={OverridePublicIp}")]
+    private static partial void LogHolePunchCapabilities(
+        ILogger logger,
+        Guid serverId,
+        Guid requestId,
+        bool supportsQuic,
+        long thresholdBytes,
+        string overridePublicIp);
 
     [LoggerMessage(8, LogLevel.Information, "Using override public IP {Ip} for {ServerId}")]
     private static partial void LogOverrideIp(ILogger logger, IPAddress ip, Guid serverId);
@@ -78,4 +89,11 @@ public partial class FederationHub
 
     [LoggerMessage(23, LogLevel.Debug, "Disconnected connection {ConnectionId} with exception")]
     private static partial void LogDisconnectedWithException(ILogger logger, string connectionId, Exception ex);
+
+    [LoggerMessage(24, LogLevel.Information, "Selected transport mode {Mode} for request {RequestId} ({Reason})")]
+    private static partial void LogTransportModeSelected(
+        ILogger logger,
+        Guid requestId,
+        TransferTransportMode mode,
+        TransferSelectionReason reason);
 }

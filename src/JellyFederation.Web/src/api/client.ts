@@ -29,11 +29,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error('Cannot reach the federation server. Is it running and is the URL correct?')
   }
   if (!res.ok) {
+    if (res.status === 401) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('jf-auth-invalid'))
+      }
+      throw new Error('Unauthorized: your local API key is missing or no longer valid. Reconnect in Setup.')
+    }
     const text = await res.text().catch(() => res.statusText)
     throw new Error(text || `HTTP ${res.status}`)
   }
   if (res.status === 204) return undefined as T
   return res.json()
+}
+
+function normalizeFileRequest(raw: FileRequest): FileRequest {
+  return {
+    ...raw,
+    selectedTransportMode: raw.selectedTransportMode ?? null,
+    failureCategory: raw.failureCategory ?? null,
+    bytesTransferred: raw.bytesTransferred ?? 0,
+    totalBytes: raw.totalBytes ?? null,
+  }
 }
 
 // Servers
@@ -110,12 +126,12 @@ export const invitationsApi = {
 
 // File requests
 export const fileRequestsApi = {
-  list: () => request<FileRequest[]>('/api/filerequests'),
+  list: async () => (await request<FileRequest[]>('/api/filerequests')).map(normalizeFileRequest),
   create: (jellyfinItemId: string, owningServerId: string) =>
     request<FileRequest>('/api/filerequests', {
       method: 'POST',
       body: JSON.stringify({ jellyfinItemId, owningServerId }),
-    }),
+    }).then(normalizeFileRequest),
   cancel: (id: string) =>
     request<void>(`/api/filerequests/${id}/cancel`, { method: 'PUT' }),
 }

@@ -1,4 +1,5 @@
 using JellyFederation.Shared.SignalR;
+using JellyFederation.Shared.Models;
 using Microsoft.Extensions.Logging;
 using System.Net;
 
@@ -41,4 +42,29 @@ public partial class HolePunchService
 
     [LoggerMessage(12, LogLevel.Debug, "Received {Bytes} bytes (not a valid probe)")]
     private static partial void LogInvalidProbe(ILogger logger, int bytes);
+
+    [LoggerMessage(13, LogLevel.Information, "Request {Id} transport mode selected: {Mode} ({Reason})")]
+    private static partial void LogTransportMode(
+        ILogger logger,
+        Guid id,
+        TransferTransportMode mode,
+        TransferSelectionReason reason);
+
+    [LoggerMessage(14, LogLevel.Warning, "Unexpected cancellation after hole punch for request {Id}")]
+    private static partial void LogUnexpectedCancellation(ILogger logger, Exception ex, Guid id);
+
+    [LoggerMessage(15, LogLevel.Information,
+        "Hole punch readiness for request {Id}: preferQuic={PreferQuic}, quicSupported={QuicSupported}, advertisedSupportsQuic={AdvertisedSupportsQuic}, thresholdBytes={ThresholdBytes}, localPort={LocalPort}, overrideIp={OverrideIp}")]
+    private static partial void LogHolePunchReadinessCapabilities(
+        ILogger logger,
+        Guid id,
+        bool preferQuic,
+        bool quicSupported,
+        bool advertisedSupportsQuic,
+        long thresholdBytes,
+        int localPort,
+        string overrideIp);
+
+    [LoggerMessage(16, LogLevel.Error, "Transfer execution failed after hole punch for request {Id}")]
+    private static partial void LogTransferExecutionFailed(ILogger logger, Exception ex, Guid id);
 }

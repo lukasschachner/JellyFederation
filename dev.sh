@@ -28,10 +28,72 @@ err()     { echo -e "${RED}✗${RESET} $*" >&2; }
 heading() { echo -e "\n${BOLD}$*${RESET}"; }
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+ensure_msquic_runtime_asset() {
+    local host_lib=""
+    local candidates=(
+        "/usr/lib/x86_64-linux-gnu/libmsquic.so"
+        "/usr/lib/x86_64-linux-gnu/libmsquic.so.2"
+        "/usr/lib64/libmsquic.so"
+        "/usr/lib/libmsquic.so"
+    )
+    for c in "${candidates[@]}"; do
+        if [[ -f "$c" ]]; then
+            host_lib="$c"
+            break
+        fi
+    done
+
+    if [[ -z "$host_lib" ]]; then
+        info "Installing host libmsquic (OpenSSL 3 build)…"
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq libmsquic
+        for c in "${candidates[@]}"; do
+            if [[ -f "$c" ]]; then
+                host_lib="$c"
+                break
+            fi
+        done
+    fi
+
+    if [[ -z "$host_lib" ]]; then
+        err "Could not locate libmsquic.so on host after installation attempt"
+        exit 1
+    fi
+
+    mkdir -p /tmp/jf-plugin/runtimes/linux-x64/native
+    cp -L "$host_lib" /tmp/jf-plugin/runtimes/linux-x64/native/libmsquic.so
+    ok "Bundled host libmsquic → /tmp/jf-plugin/runtimes/linux-x64/native/libmsquic.so"
+}
+
+ensure_local_container_msquic() {
+    local src="/config/plugins/JellyFederation_1.0.0.0/runtimes/linux-x64/native/libmsquic.so"
+    local lib_dir="/usr/lib/x86_64-linux-gnu"
+
+    if ! container_running; then
+        return
+    fi
+
+    docker exec "$CONTAINER" sh -lc "
+set -e
+if [ ! -f '$src' ]; then
+  echo 'missing plugin-bundled libmsquic at $src' >&2
+  exit 1
+fi
+mkdir -p '$lib_dir'
+cp -f '$src' '$lib_dir/libmsquic.so.2'
+ln -sf '$lib_dir/libmsquic.so.2' '$lib_dir/libmsquic.so'
+ldconfig
+" >/dev/null
+
+    ok "Ensured local container libmsquic is available via dynamic linker"
+}
+
 build_plugin() {
     info "Building plugin…"
-    dotnet publish "$REPO_DIR/src/JellyFederation.Plugin" -c Release -o /tmp/jf-plugin -v q 2>&1 \
+    rm -rf /tmp/jf-plugin
+    dotnet publish "$REPO_DIR/src/JellyFederation.Plugin" -c Release -r linux-x64 --self-contained false -o /tmp/jf-plugin -v q 2>&1 \
         | grep -v "^$" | grep -v "^Build" | grep -v "Determining" | grep -v "All projects" || true
+    ensure_msquic_runtime_asset
     ok "Plugin built → /tmp/jf-plugin"
 }
 
@@ -49,12 +111,14 @@ install_plugin() {
     fi
 
     if [[ -w "$PLUGIN_DIR" ]]; then
-        cp /tmp/jf-plugin/*.dll "$PLUGIN_DIR/"
+        rm -rf "$PLUGIN_DIR"/* 2>/dev/null || true
+        cp -a /tmp/jf-plugin/. "$PLUGIN_DIR/"
         cat > "$PLUGIN_DIR/meta.json" << EOF
 {"Id":"$PLUGIN_ID","Name":"JellyFederation","Version":"1.0.0.0","Status":"Active"}
 EOF
     else
-        sudo cp /tmp/jf-plugin/*.dll "$PLUGIN_DIR/"
+        sudo rm -rf "$PLUGIN_DIR"/* 2>/dev/null || true
+        sudo cp -a /tmp/jf-plugin/. "$PLUGIN_DIR/"
         printf '{"Id":"%s","Name":"JellyFederation","Version":"1.0.0.0","Status":"Active"}\n' "$PLUGIN_ID" \
             | sudo tee "$PLUGIN_DIR/meta.json" >/dev/null
     fi
@@ -127,28 +191,39 @@ import sqlite3, sys
 db, preferred, exclude = sys.argv[1], sys.argv[2], sys.argv[3]
 conn = sqlite3.connect(db)
 row = None
-if preferred:
-    if exclude:
-        row = conn.execute(
-            "SELECT Id, ApiKey, Name FROM Servers WHERE lower(Name)=lower(?) AND Id != ? ORDER BY RegisteredAt DESC LIMIT 1",
-            (preferred, exclude),
-        ).fetchone()
-    else:
-        row = conn.execute(
-            "SELECT Id, ApiKey, Name FROM Servers WHERE lower(Name)=lower(?) ORDER BY RegisteredAt DESC LIMIT 1",
-            (preferred,),
-        ).fetchone()
+try:
+    tables = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Servers' LIMIT 1"
+    ).fetchone()
+    if not tables:
+        conn.close()
+        raise SystemExit(0)
 
-if row is None:
-    if exclude:
-        row = conn.execute(
-            "SELECT Id, ApiKey, Name FROM Servers WHERE Id != ? ORDER BY RegisteredAt DESC LIMIT 1",
-            (exclude,),
-        ).fetchone()
-    else:
-        row = conn.execute(
-            "SELECT Id, ApiKey, Name FROM Servers ORDER BY RegisteredAt DESC LIMIT 1"
-        ).fetchone()
+    if preferred:
+        if exclude:
+            row = conn.execute(
+                "SELECT Id, ApiKey, Name FROM Servers WHERE lower(Name)=lower(?) AND Id != ? ORDER BY RegisteredAt DESC LIMIT 1",
+                (preferred, exclude),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT Id, ApiKey, Name FROM Servers WHERE lower(Name)=lower(?) ORDER BY RegisteredAt DESC LIMIT 1",
+                (preferred,),
+            ).fetchone()
+
+    if row is None:
+        if exclude:
+            row = conn.execute(
+                "SELECT Id, ApiKey, Name FROM Servers WHERE Id != ? ORDER BY RegisteredAt DESC LIMIT 1",
+                (exclude,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT Id, ApiKey, Name FROM Servers ORDER BY RegisteredAt DESC LIMIT 1"
+            ).fetchone()
+except sqlite3.OperationalError:
+    conn.close()
+    raise SystemExit(0)
 
 if row:
     print(row[0], row[1], row[2])
@@ -162,6 +237,7 @@ ensure_local_container_running() {
             reset_plugin_status
             info "Starting Jellyfin container…"
             docker start "$CONTAINER" >/dev/null
+            ensure_local_container_msquic
             ok "Jellyfin started"
         fi
         return
@@ -175,11 +251,14 @@ ensure_local_container_running() {
         --name "$CONTAINER" \
         -p "${PORT}:8096" \
         -p "7777:7777/udp" \
+        --cap-add SYS_ADMIN \
+        --cap-add SYS_NICE \
         --add-host=host.docker.internal:host-gateway \
         -v "$DATA_DIR/config:/config" \
         -v "$DATA_DIR/cache:/cache" \
         -v "$DATA_DIR/media:/media" \
         jellyfin/jellyfin >/dev/null
+    ensure_local_container_msquic
     ok "Jellyfin container started"
 }
 
@@ -189,15 +268,19 @@ deploy_local_from_tmp() {
     ensure_local_container_running
     info "Restarting local Jellyfin to pick up plugin…"
     docker restart "$CONTAINER" >/dev/null
+    ensure_local_container_msquic
     ok "Local Jellyfin restarted"
 }
 
 deploy_remote_from_tmp() {
     local test_host="${1:-$TEST_HOST_DEFAULT}"
     local test_user="${2:-$TEST_USER_DEFAULT}"
-    info "Copying DLLs to ${test_user}@${test_host}:${TEST_PLUGIN_DIR}…"
-    scp /tmp/jf-plugin/*.dll "${test_user}@${test_host}:${TEST_PLUGIN_DIR}/"
-    ok "DLLs deployed to $test_host"
+    info "Deploying plugin artifacts to ${test_user}@${test_host}:${TEST_PLUGIN_DIR}…"
+    ssh "${test_user}@${test_host}" "mkdir -p '${TEST_PLUGIN_DIR}'"
+    ssh "${test_user}@${test_host}" "rm -rf '${TEST_PLUGIN_DIR}'/* 2>/dev/null || true"
+    tar -C /tmp/jf-plugin -cf - . | ssh "${test_user}@${test_host}" "tar -C '${TEST_PLUGIN_DIR}' -xf -"
+    ssh "${test_user}@${test_host}" "printf '{\"Id\":\"%s\",\"Name\":\"JellyFederation\",\"Version\":\"1.0.0.0\",\"Status\":\"Active\"}\n' '${PLUGIN_ID}' > '${TEST_PLUGIN_DIR}/meta.json'"
+    ok "Plugin artifacts deployed to $test_host"
     info "Restarting remote Jellyfin on $test_host…"
     ssh "${test_user}@${test_host}" "cd '${TEST_COMPOSE_DIR}' && docker compose restart jellyfin"
     ok "Remote Jellyfin restarted on $test_host"
@@ -226,11 +309,14 @@ cmd_setup() {
             --name "$CONTAINER" \
             -p "${PORT}:8096" \
             -p "7777:7777/udp" \
+            --cap-add SYS_ADMIN \
+            --cap-add SYS_NICE \
             --add-host=host.docker.internal:host-gateway \
             -v "$DATA_DIR/config:/config" \
             -v "$DATA_DIR/cache:/cache" \
             -v "$DATA_DIR/media:/media" \
             jellyfin/jellyfin >/dev/null
+        ensure_local_container_msquic
         ok "Jellyfin container started"
     fi
 
@@ -251,6 +337,7 @@ cmd_start() {
         reset_plugin_status
         info "Starting Jellyfin container…"
         docker start "$CONTAINER" >/dev/null
+        ensure_local_container_msquic
         ok "Jellyfin started"
     elif container_running; then
         ok "Jellyfin already running"
@@ -288,6 +375,7 @@ cmd_restart() {
         reset_plugin_status
         info "Restarting Jellyfin…"
         docker restart "$CONTAINER" >/dev/null
+        ensure_local_container_msquic
         ok "Jellyfin restarted"
     else
         err "Container not found — run '$0 setup' first"
@@ -296,6 +384,7 @@ cmd_restart() {
 }
 
 cmd_server() {
+    local db="$REPO_DIR/src/JellyFederation.Server/federation.db"
     if server_running; then
         ok "Federation server already running (PID $(cat "$SERVER_PID_FILE"))"
         return
@@ -307,10 +396,13 @@ cmd_server() {
     lsof -ti:$FEDERATION_PORT | xargs kill -9 2>/dev/null || true
 
     info "Starting federation server on :$FEDERATION_PORT…"
-    nohup dotnet run --project "$REPO_DIR/src/JellyFederation.Server" \
+    nohup env ConnectionStrings__Default="Data Source=$db" \
+        dotnet run --project "$REPO_DIR/src/JellyFederation.Server" \
         > "$SERVER_LOG" 2>&1 &
     echo $! > "$SERVER_PID_FILE"
     ok "Federation server started (PID $!, log: $SERVER_LOG)"
+    wait_healthy "http://localhost:$FEDERATION_PORT/swagger/v1/swagger.json" "federation server" || \
+        wait_healthy "http://localhost:$FEDERATION_PORT/" "federation server"
 }
 
 cmd_deploy() {
@@ -401,6 +493,8 @@ cmd_seed_config() {
   <DownloadDirectory>/media/federation</DownloadDirectory>
   <OverridePublicIp>${host_ip}</OverridePublicIp>
   <HolePunchPort>7777</HolePunchPort>
+  <PreferQuicForLargeFiles>true</PreferQuicForLargeFiles>
+  <LargeFileQuicThresholdBytes>104857600</LargeFileQuicThresholdBytes>
   <TelemetryServiceName>jellyfederation-plugin-local</TelemetryServiceName>
   <TelemetryOtlpEndpoint>${otlp_url}</TelemetryOtlpEndpoint>
   <TelemetrySamplingRatio>1</TelemetrySamplingRatio>
@@ -419,6 +513,7 @@ EOF
     if container_running; then
         info "Restarting Jellyfin to apply config…"
         docker restart "$CONTAINER" >/dev/null
+        ensure_local_container_msquic
         ok "Jellyfin restarted"
     fi
 }
@@ -466,8 +561,10 @@ cmd_seed_config_remote() {
   <ApiKey>${SERVER_API_KEY}</ApiKey>
   <ServerName>${SERVER_NAME}</ServerName>
   <DownloadDirectory>/media/federation</DownloadDirectory>
-  <OverridePublicIp></OverridePublicIp>
+  <OverridePublicIp>${test_host}</OverridePublicIp>
   <HolePunchPort>7777</HolePunchPort>
+  <PreferQuicForLargeFiles>true</PreferQuicForLargeFiles>
+  <LargeFileQuicThresholdBytes>104857600</LargeFileQuicThresholdBytes>
   <TelemetryServiceName>jellyfederation-plugin-remote</TelemetryServiceName>
   <TelemetryOtlpEndpoint>${otlp_url}</TelemetryOtlpEndpoint>
   <TelemetrySamplingRatio>1</TelemetrySamplingRatio>

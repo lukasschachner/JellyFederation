@@ -1,15 +1,18 @@
 using JellyFederation.Plugin.Configuration;
 using JellyFederation.Shared.Telemetry;
 using JellyFederation.Shared.SignalR;
+using JellyFederation.Shared.Models;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
 using System.Net;
-using System.Net.Http.Json;
 using System.Net.Sockets;
-using System.Text;
 using System.Text.Json;
 using System.Diagnostics;
+using System.Net.Quic;
+using System.Net.Security;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 
 namespace JellyFederation.Plugin.Services;
 
@@ -23,10 +26,6 @@ namespace JellyFederation.Plugin.Services;
 ///     3. EOF frame: magic bytes
 ///   Receiver → Sender:
 ///     ACK frames: [4-byte seq] (selective ACK, retransmit on timeout)
-///
-/// Note: for large files a production implementation would use QUIC
-/// (System.Net.Quic). This implementation uses a simple stop-and-wait ARQ
-/// over the punched UDP path so that no additional libraries are required.
 /// </summary>
 public partial class FileTransferService(
     ILibraryManager libraryManager,
@@ -39,6 +38,10 @@ public partial class FileTransferService(
     private const int ChunkSize = 32 * 1024; // 32 KB
     private const int AckTimeoutMs = 2_000;
     private const int MaxRetries = 10;
+    private const int QuicAcceptTimeoutMs = 10_000;
+    private const long QuicDefaultStreamErrorCode = 0x0A;
+    private const long QuicDefaultCloseErrorCode = 0x0B;
+    private static readonly SslApplicationProtocol QuicAlpn = new("jellyfederation-transfer/1");
     private static readonly byte[] EofMagic = "JFEOF"u8.ToArray();
 
     // Active transfer cancellation tokens keyed by fileRequestId
@@ -59,7 +62,9 @@ public partial class FileTransferService(
         string jellyfinItemId,
         Socket socket,
         IPEndPoint remoteEp,
-        PluginConfiguration config)
+        PluginConfiguration config,
+        TransferTransportMode selectedMode = TransferTransportMode.ArqUdp,
+        TransferSelectionReason selectionReason = TransferSelectionReason.DefaultArq)
     {
         var startedAt = Stopwatch.StartNew();
         var correlationId = FederationTelemetry.CreateCorrelationId();
@@ -93,13 +98,50 @@ public partial class FileTransferService(
             return;
         }
 
+        var effectiveMode = selectedMode;
+        var effectiveReason = selectionReason;
+        if (selectedMode == TransferTransportMode.Quic &&
+            (!config.PreferQuicForLargeFiles || !QuicConnection.IsSupported))
+        {
+            effectiveMode = TransferTransportMode.ArqUdp;
+            effectiveReason = config.PreferQuicForLargeFiles
+                ? TransferSelectionReason.QuicUnavailableLocal
+                : TransferSelectionReason.QuicUnsupportedPeer;
+            LogQuicFallbackBeforeSend(logger, fileRequestId, effectiveReason);
+        }
+
         LogSendingFile(logger, fileInfo.Name, fileInfo.Length, remoteEp);
+        LogTransferMode(logger, fileRequestId, effectiveMode, effectiveReason);
 
         using var cts = new CancellationTokenSource();
         _activeCts[fileRequestId] = cts;
         try
         {
             var ct = cts.Token;
+
+            if (effectiveMode == TransferTransportMode.Quic)
+            {
+                try
+                {
+                    await SendWithQuicAsync(fileInfo, remoteEp, ct);
+                    LogFileSent(logger, fileInfo.Name);
+                    FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
+                    FederationMetrics.RecordOperation("file.transfer.send.quic", "plugin", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+                    return;
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    effectiveMode = TransferTransportMode.ArqUdp;
+                    effectiveReason = TransferSelectionReason.FallbackAfterError;
+                    LogQuicRuntimeFallback(logger, fileRequestId, ex.Message);
+                    LogTransferMode(logger, fileRequestId, effectiveMode, effectiveReason);
+                    FederationMetrics.RecordRetry("file.transfer.send.quic", "plugin", FederationPlugin.ReleaseVersion);
+                }
+            }
 
             // Send header
             var header = JsonSerializer.SerializeToUtf8Bytes(new
@@ -129,7 +171,7 @@ public partial class FileTransferService(
             await socket.SendToAsync(EofMagic, SocketFlags.None, remoteEp);
             LogFileSent(logger, fileInfo.Name);
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
-            FederationMetrics.RecordOperation("file.transfer.send", "plugin", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+            FederationMetrics.RecordOperation("file.transfer.send.arq", "plugin", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
         }
         catch (OperationCanceledException)
         {
@@ -139,7 +181,10 @@ public partial class FileTransferService(
         catch (Exception ex)
         {
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError, ex);
-            FederationMetrics.RecordOperation("file.transfer.send", "plugin", FederationTelemetry.OutcomeError, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+            var operation = effectiveMode == TransferTransportMode.Quic
+                ? "file.transfer.send.quic"
+                : "file.transfer.send.arq";
+            FederationMetrics.RecordOperation(operation, "plugin", FederationTelemetry.OutcomeError, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
             throw;
         }
         finally
@@ -154,7 +199,9 @@ public partial class FileTransferService(
         Socket socket,
         IPEndPoint remoteEp,
         PluginConfiguration config,
-        HubConnection connection)
+        HubConnection connection,
+        TransferTransportMode selectedMode = TransferTransportMode.ArqUdp,
+        TransferSelectionReason selectionReason = TransferSelectionReason.DefaultArq)
     {
         var startedAt = Stopwatch.StartNew();
         var correlationId = FederationTelemetry.CreateCorrelationId();
@@ -173,6 +220,20 @@ public partial class FileTransferService(
 
         Directory.CreateDirectory(config.DownloadDirectory);
 
+        var effectiveMode = selectedMode;
+        var effectiveReason = selectionReason;
+        if (selectedMode == TransferTransportMode.Quic &&
+            (!config.PreferQuicForLargeFiles || !QuicConnection.IsSupported))
+        {
+            effectiveMode = TransferTransportMode.ArqUdp;
+            effectiveReason = config.PreferQuicForLargeFiles
+                ? TransferSelectionReason.QuicUnavailableLocal
+                : TransferSelectionReason.QuicUnsupportedPeer;
+            LogQuicFallbackBeforeReceive(logger, fileRequestId, effectiveReason);
+        }
+
+        LogTransferMode(logger, fileRequestId, effectiveMode, effectiveReason);
+
         var recvBuffer = new byte[ChunkSize + 8];
         string? filePath = null;
         FileStream? fs = null;
@@ -187,6 +248,33 @@ public partial class FileTransferService(
         _activeCts[fileRequestId] = transferCts;
 
         using var timeoutCts = new CancellationTokenSource();
+
+        if (effectiveMode == TransferTransportMode.Quic)
+        {
+            try
+            {
+                await ReceiveWithQuicAsync(fileRequestId, socket, config, connection, transferCts.Token, correlationId);
+                _activeCts.TryRemove(fileRequestId, out _);
+                FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
+                FederationMetrics.RecordOperation("file.transfer.receive.quic", "plugin", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+                return;
+            }
+            catch (OperationCanceledException) when (transferCts.IsCancellationRequested)
+            {
+                LogReceiveCancelled(logger, fileRequestId);
+                _activeCts.TryRemove(fileRequestId, out _);
+                FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeCancelled);
+                return;
+            }
+            catch (Exception ex)
+            {
+                effectiveMode = TransferTransportMode.ArqUdp;
+                effectiveReason = TransferSelectionReason.FallbackAfterError;
+                LogQuicRuntimeFallback(logger, fileRequestId, ex.Message);
+                LogTransferMode(logger, fileRequestId, effectiveMode, effectiveReason);
+                FederationMetrics.RecordRetry("file.transfer.receive.quic", "plugin", FederationPlugin.ReleaseVersion);
+            }
+        }
 
         try
         {
@@ -210,7 +298,7 @@ public partial class FileTransferService(
                 {
                     LogReceiveTimeout(logger);
                     FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeTimeout);
-                    FederationMetrics.RecordTimeout("file.transfer.receive", "plugin", FederationPlugin.ReleaseVersion);
+                    FederationMetrics.RecordTimeout("file.transfer.receive.arq", "plugin", FederationPlugin.ReleaseVersion);
                     break;
                 }
 
@@ -329,7 +417,221 @@ public partial class FileTransferService(
 
         var outcome = receivedEof ? FederationTelemetry.OutcomeSuccess : FederationTelemetry.OutcomeCancelled;
         FederationTelemetry.SetOutcome(activity, outcome);
-        FederationMetrics.RecordOperation("file.transfer.receive", "plugin", outcome, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+        FederationMetrics.RecordOperation("file.transfer.receive.arq", "plugin", outcome, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+    }
+
+    private async Task SendWithQuicAsync(
+        FileInfo fileInfo,
+        IPEndPoint remoteEp,
+        CancellationToken ct)
+    {
+        var connection = await QuicConnection.ConnectAsync(new QuicClientConnectionOptions
+        {
+            RemoteEndPoint = remoteEp,
+            DefaultStreamErrorCode = QuicDefaultStreamErrorCode,
+            DefaultCloseErrorCode = QuicDefaultCloseErrorCode,
+            ClientAuthenticationOptions = new SslClientAuthenticationOptions
+            {
+                EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls13,
+                ApplicationProtocols = [QuicAlpn],
+                RemoteCertificateValidationCallback = (_, _, _, _) => true,
+                TargetHost = "jellyfederation-transfer"
+            }
+        }, ct);
+
+        await using (connection.ConfigureAwait(false))
+        {
+            var stream = await connection.OpenOutboundStreamAsync(QuicStreamType.Bidirectional, ct);
+            await using (stream.ConfigureAwait(false))
+            {
+                var header = JsonSerializer.SerializeToUtf8Bytes(new FileHeader(fileInfo.Name, fileInfo.Length));
+                await WriteInt32Async(stream, header.Length, ct);
+                await stream.WriteAsync(header, ct);
+
+                await using var fs = fileInfo.OpenRead();
+                var buffer = new byte[ChunkSize];
+                int bytesRead;
+                while ((bytesRead = await fs.ReadAsync(buffer, ct)) > 0)
+                {
+                    await stream.WriteAsync(buffer.AsMemory(0, bytesRead), ct);
+                }
+
+                stream.CompleteWrites();
+            }
+        }
+    }
+
+    private async Task ReceiveWithQuicAsync(
+        Guid fileRequestId,
+        Socket holePunchSocket,
+        PluginConfiguration config,
+        HubConnection connection,
+        CancellationToken ct,
+        string correlationId)
+    {
+        var localPort = ((IPEndPoint)holePunchSocket.LocalEndPoint!).Port;
+        holePunchSocket.Dispose();
+
+        string? filePath = null;
+        bool completed = false;
+        long totalBytes = 0;
+        long bytesReceived = 0;
+
+        try
+        {
+            var serverCert = CreateEphemeralCertificate();
+            var listener = await QuicListener.ListenAsync(new QuicListenerOptions
+            {
+                ListenEndPoint = new IPEndPoint(IPAddress.Any, localPort),
+                ApplicationProtocols = [QuicAlpn],
+                ConnectionOptionsCallback = (_, _, _) =>
+                {
+                    var options = new QuicServerConnectionOptions
+                    {
+                        DefaultStreamErrorCode = QuicDefaultStreamErrorCode,
+                        DefaultCloseErrorCode = QuicDefaultCloseErrorCode,
+                        ServerAuthenticationOptions = new SslServerAuthenticationOptions
+                        {
+                            EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls13,
+                            ApplicationProtocols = [QuicAlpn],
+                            ServerCertificate = serverCert
+                        }
+                    };
+                    return ValueTask.FromResult(options);
+                }
+            });
+
+            await using (listener.ConfigureAwait(false))
+            {
+                using var acceptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                acceptCts.CancelAfter(QuicAcceptTimeoutMs);
+                var quicConn = await listener.AcceptConnectionAsync(acceptCts.Token);
+                await using (quicConn.ConfigureAwait(false))
+                {
+                    var stream = await quicConn.AcceptInboundStreamAsync(ct);
+                    await using (stream.ConfigureAwait(false))
+                    {
+                        var headerLength = await ReadInt32Async(stream, ct);
+                        if (headerLength <= 0 || headerLength > 64 * 1024)
+                            throw new IOException($"Invalid QUIC header length: {headerLength}");
+
+                        var headerBytes = new byte[headerLength];
+                        await ReadExactlyAsync(stream, headerBytes, ct);
+                        var header = JsonSerializer.Deserialize<FileHeader>(headerBytes)
+                            ?? throw new IOException("Invalid QUIC file header");
+
+                        filePath = GetUniqueFilePath(Path.Combine(config.DownloadDirectory, header.FileName));
+                        await using var fs = File.Create(filePath);
+                        totalBytes = header.FileSize;
+                        LogReceivingFile(logger, header.FileName, header.FileSize, filePath);
+
+                        var buffer = new byte[ChunkSize];
+                        var lastProgressReport = DateTime.UtcNow;
+                        while (true)
+                        {
+                            var read = await stream.ReadAsync(buffer, ct);
+                            if (read == 0)
+                                break;
+
+                            await fs.WriteAsync(buffer.AsMemory(0, read), ct);
+                            bytesReceived += read;
+                            if (totalBytes > 0 && (DateTime.UtcNow - lastProgressReport).TotalSeconds >= 1)
+                            {
+                                lastProgressReport = DateTime.UtcNow;
+                                await ReportProgressAsync(connection, fileRequestId, bytesReceived, totalBytes);
+                            }
+                        }
+
+                        await fs.FlushAsync(ct);
+                    }
+                }
+            }
+
+            if (totalBytes > 0)
+                await ReportProgressAsync(connection, fileRequestId, totalBytes, totalBytes);
+            completed = true;
+        }
+        finally
+        {
+            if (!completed && filePath is not null && File.Exists(filePath))
+            {
+                try
+                {
+                    File.Delete(filePath);
+                    LogDeletedIncompleteFile(logger, filePath);
+                }
+                catch (Exception ex)
+                {
+                    LogCouldNotDeleteIncompleteFile(logger, ex, filePath);
+                }
+            }
+        }
+
+        if (completed && filePath is not null && File.Exists(filePath))
+        {
+            LogFileSaved(logger, filePath);
+            TriggerLibraryScan(filePath, config.DownloadDirectory);
+
+            var cfg = configProvider.GetConfiguration();
+            var req = new HttpRequestMessage(
+                HttpMethod.Put,
+                $"{cfg.FederationServerUrl.TrimEnd('/')}/api/filerequests/{fileRequestId}/complete");
+            req.Headers.Add("X-Api-Key", cfg.ApiKey);
+            TraceContextPropagation.InjectToHttpRequest(req);
+            TraceContextPropagation.InjectCorrelationId(req.Headers, correlationId);
+            try
+            {
+                var resp = await http.SendAsync(req, ct);
+                if (!resp.IsSuccessStatusCode)
+                    LogMarkCompleteFailed(logger, fileRequestId, resp.StatusCode);
+            }
+            catch (Exception ex)
+            {
+                LogNotifyCompletionFailed(logger, ex, fileRequestId);
+            }
+        }
+    }
+
+    private static X509Certificate2 CreateEphemeralCertificate()
+    {
+        using var rsa = RSA.Create(2048);
+        var request = new CertificateRequest(
+            "CN=jellyfederation-transfer",
+            rsa,
+            HashAlgorithmName.SHA256,
+            RSASignaturePadding.Pkcs1);
+        request.CertificateExtensions.Add(
+            new X509BasicConstraintsExtension(false, false, 0, false));
+        request.CertificateExtensions.Add(
+            new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
+        var cert = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddHours(12));
+        return cert;
+    }
+
+    private static async Task WriteInt32Async(Stream stream, int value, CancellationToken ct)
+    {
+        Span<byte> bytes = stackalloc byte[4];
+        BitConverter.TryWriteBytes(bytes, value);
+        await stream.WriteAsync(bytes.ToArray(), ct);
+    }
+
+    private static async Task<int> ReadInt32Async(Stream stream, CancellationToken ct)
+    {
+        var bytes = new byte[4];
+        await ReadExactlyAsync(stream, bytes, ct);
+        return BitConverter.ToInt32(bytes, 0);
+    }
+
+    private static async Task ReadExactlyAsync(Stream stream, byte[] buffer, CancellationToken ct)
+    {
+        var offset = 0;
+        while (offset < buffer.Length)
+        {
+            var read = await stream.ReadAsync(buffer.AsMemory(offset, buffer.Length - offset), ct);
+            if (read == 0)
+                throw new EndOfStreamException("Unexpected end of stream");
+            offset += read;
+        }
     }
 
     /// <summary>
