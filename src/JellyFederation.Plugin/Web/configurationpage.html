@@ -1,214 +1,215 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="utf-8" />
+    <meta charset="utf-8"/>
     <title>JellyFederation</title>
 </head>
 <body>
-    <div id="JellyFederationConfigPage" data-role="page" class="page type-interior pluginConfigurationPage"
-         data-require="emby-input,emby-button,emby-select,emby-checkbox">
-        <div data-role="content">
-            <div class="content-primary">
-                <form id="JellyFederationConfigForm">
+<div class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button,emby-select,emby-checkbox" data-role="page"
+     id="JellyFederationConfigPage">
+    <div data-role="content">
+        <div class="content-primary">
+            <form id="JellyFederationConfigForm">
 
-                    <div class="sectionTitleContainer flex align-items-center">
-                        <h2 class="sectionTitle">JellyFederation Settings</h2>
+                <div class="sectionTitleContainer flex align-items-center">
+                    <h2 class="sectionTitle">JellyFederation Settings</h2>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="federationServerUrl">
+                        Federation Server URL
+                    </label>
+                    <input id="federationServerUrl" is="emby-input"
+                           name="FederationServerUrl" placeholder="https://federation.example.com"
+                           type="url"/>
+                    <div class="fieldDescription">
+                        The URL of your JellyFederation server.
                     </div>
+                </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="federationServerUrl">
-                            Federation Server URL
-                        </label>
-                        <input id="federationServerUrl" name="FederationServerUrl"
-                               type="url" is="emby-input"
-                               placeholder="https://federation.example.com" />
-                        <div class="fieldDescription">
-                            The URL of your JellyFederation server.
-                        </div>
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="serverId">
+                        Server ID
+                    </label>
+                    <input id="serverId" is="emby-input"
+                           name="ServerId" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                           type="text"/>
+                    <div class="fieldDescription">
+                        Your server's ID from the federation registration.
                     </div>
+                </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="serverId">
-                            Server ID
-                        </label>
-                        <input id="serverId" name="ServerId"
-                               type="text" is="emby-input"
-                               placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
-                        <div class="fieldDescription">
-                            Your server's ID from the federation registration.
-                        </div>
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="apiKey">
+                        API Key
+                    </label>
+                    <input id="apiKey" is="emby-input"
+                           name="ApiKey" placeholder="Your federation API key"
+                           style="font-family: monospace; letter-spacing: 0.1em;"
+                           type="password"/>
+                    <div class="fieldDescription">
+                        The API key issued when you registered this server.
                     </div>
+                </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="apiKey">
-                            API Key
-                        </label>
-                        <input id="apiKey" name="ApiKey"
-                               type="password" is="emby-input"
-                                placeholder="Your federation API key"
-                                style="font-family: monospace; letter-spacing: 0.1em;" />
-                        <div class="fieldDescription">
-                            The API key issued when you registered this server.
-                        </div>
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="serverName">
+                        Server Name
+                    </label>
+                    <input id="serverName" is="emby-input"
+                           name="ServerName" placeholder="My Jellyfin Server"
+                           type="text"/>
+                    <div class="fieldDescription">
+                        Display name shown to other federation members.
                     </div>
+                </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="serverName">
-                            Server Name
-                        </label>
-                        <input id="serverName" name="ServerName"
-                               type="text" is="emby-input"
-                               placeholder="My Jellyfin Server" />
-                        <div class="fieldDescription">
-                            Display name shown to other federation members.
-                        </div>
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="publicJellyfinUrl">
+                        Public Jellyfin URL (optional fallback)
+                    </label>
+                    <input id="publicJellyfinUrl" is="emby-input"
+                           name="PublicJellyfinUrl" placeholder="https://jellyfin.example.com"
+                           type="url"/>
+                    <div class="fieldDescription">
+                        Fallback source for previews when an image cannot be embedded during sync.
                     </div>
+                </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="publicJellyfinUrl">
-                            Public Jellyfin URL (optional fallback)
-                        </label>
-                        <input id="publicJellyfinUrl" name="PublicJellyfinUrl"
-                               type="url" is="emby-input"
-                               placeholder="https://jellyfin.example.com" />
-                        <div class="fieldDescription">
-                            Fallback source for previews when an image cannot be embedded during sync.
-                        </div>
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="downloadDirectory">
+                        Download Directory
+                    </label>
+                    <input id="downloadDirectory" is="emby-input"
+                           name="DownloadDirectory" placeholder="/data/newmedia/federation"
+                           type="text"/>
+                    <div class="fieldDescription">
+                        Local path where received files will be saved. Must be a directory Jellyfin can scan.
                     </div>
+                </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="downloadDirectory">
-                            Download Directory
-                        </label>
-                        <input id="downloadDirectory" name="DownloadDirectory"
-                               type="text" is="emby-input"
-                               placeholder="/data/newmedia/federation" />
-                        <div class="fieldDescription">
-                            Local path where received files will be saved. Must be a directory Jellyfin can scan.
-                        </div>
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="overridePublicIp">
+                        Override Public IP (optional)
+                    </label>
+                    <input id="overridePublicIp" is="emby-input"
+                           name="OverridePublicIp" placeholder="203.0.113.25"
+                           type="text"/>
+                    <div class="fieldDescription">
+                        Leave empty to auto-detect. Set this when running behind NAT/Docker with a known public IP.
                     </div>
+                </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="overridePublicIp">
-                            Override Public IP (optional)
-                        </label>
-                        <input id="overridePublicIp" name="OverridePublicIp"
-                               type="text" is="emby-input"
-                               placeholder="203.0.113.25" />
-                        <div class="fieldDescription">
-                            Leave empty to auto-detect. Set this when running behind NAT/Docker with a known public IP.
-                        </div>
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="holePunchPort">
+                        Hole Punch UDP Port
+                    </label>
+                    <input id="holePunchPort" is="emby-input"
+                           min="0" name="HolePunchPort" placeholder="0"
+                           type="number"/>
+                    <div class="fieldDescription">
+                        0 = ephemeral port. Use a fixed port when you need NAT port-forwarding.
                     </div>
+                </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="holePunchPort">
-                            Hole Punch UDP Port
-                        </label>
-                        <input id="holePunchPort" name="HolePunchPort"
-                               type="number" min="0" is="emby-input"
-                               placeholder="0" />
-                        <div class="fieldDescription">
-                            0 = ephemeral port. Use a fixed port when you need NAT port-forwarding.
-                        </div>
+                <div class="checkboxContainer">
+                    <label>
+                        <input id="preferQuicForLargeFiles" is="emby-checkbox" name="PreferQuicForLargeFiles"
+                               type="checkbox"/>
+                        <span>Prefer QUIC for large files (when supported by both peers)</span>
+                    </label>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="largeFileQuicThresholdBytes">
+                        Large File QUIC Threshold (bytes)
+                    </label>
+                    <input id="largeFileQuicThresholdBytes" is="emby-input"
+                           min="1" name="LargeFileQuicThresholdBytes" placeholder="536870912"
+                           type="number"/>
+                    <div class="fieldDescription">
+                        Files at or above this size are eligible for QUIC if both peers advertise support.
                     </div>
+                </div>
 
-                    <div class="checkboxContainer">
-                        <label>
-                            <input id="preferQuicForLargeFiles" name="PreferQuicForLargeFiles" type="checkbox" is="emby-checkbox" />
-                            <span>Prefer QUIC for large files (when supported by both peers)</span>
-                        </label>
-                    </div>
+                <div>
+                    <button class="raised button-submit block" is="emby-button" type="submit">
+                        <span>Save</span>
+                    </button>
+                </div>
 
-                    <div class="inputContainer">
-                        <label class="inputLabel inputLabelUnfocused" for="largeFileQuicThresholdBytes">
-                            Large File QUIC Threshold (bytes)
-                        </label>
-                        <input id="largeFileQuicThresholdBytes" name="LargeFileQuicThresholdBytes"
-                               type="number" min="1" is="emby-input"
-                               placeholder="536870912" />
-                        <div class="fieldDescription">
-                            Files at or above this size are eligible for QUIC if both peers advertise support.
-                        </div>
-                    </div>
-
-                    <div>
-                        <button is="emby-button" type="submit" class="raised button-submit block">
-                            <span>Save</span>
-                        </button>
-                    </div>
-
-                </form>
-            </div>
+            </form>
         </div>
     </div>
+</div>
 
-    <script type="text/javascript">
-        var JellyFederationConfig = {
-            pluginId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+<script type="text/javascript">
+    var JellyFederationConfig = {
+        pluginId: "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
 
-            loadConfig: function () {
-                Dashboard.showLoadingMsg();
-                ApiClient.getPluginConfiguration(this.pluginId).then(function (config) {
-                    config = config || {};
-                    document.querySelector('#federationServerUrl').value = config.FederationServerUrl || '';
-                    document.querySelector('#serverId').value = config.ServerId || '';
-                    document.querySelector('#apiKey').value = config.ApiKey || '';
-                    document.querySelector('#serverName').value = config.ServerName || '';
-                    document.querySelector('#publicJellyfinUrl').value = config.PublicJellyfinUrl || '';
-                    document.querySelector('#downloadDirectory').value = config.DownloadDirectory || '';
-                    document.querySelector('#overridePublicIp').value = config.OverridePublicIp || '';
-                    document.querySelector('#holePunchPort').value = config.HolePunchPort || 0;
-                    document.querySelector('#preferQuicForLargeFiles').checked = config.PreferQuicForLargeFiles !== false;
-                    document.querySelector('#largeFileQuicThresholdBytes').value = config.LargeFileQuicThresholdBytes || 536870912;
-                    Dashboard.hideLoadingMsg();
-                }).catch(function (err) {
-                    console.error('[JellyFederation] Failed to load config:', err);
-                    Dashboard.hideLoadingMsg();
-                });
-            },
+        loadConfig: function () {
+            Dashboard.showLoadingMsg();
+            ApiClient.getPluginConfiguration(this.pluginId).then(function (config) {
+                config = config || {};
+                document.querySelector('#federationServerUrl').value = config.FederationServerUrl || '';
+                document.querySelector('#serverId').value = config.ServerId || '';
+                document.querySelector('#apiKey').value = config.ApiKey || '';
+                document.querySelector('#serverName').value = config.ServerName || '';
+                document.querySelector('#publicJellyfinUrl').value = config.PublicJellyfinUrl || '';
+                document.querySelector('#downloadDirectory').value = config.DownloadDirectory || '';
+                document.querySelector('#overridePublicIp').value = config.OverridePublicIp || '';
+                document.querySelector('#holePunchPort').value = config.HolePunchPort || 0;
+                document.querySelector('#preferQuicForLargeFiles').checked = config.PreferQuicForLargeFiles !== false;
+                document.querySelector('#largeFileQuicThresholdBytes').value = config.LargeFileQuicThresholdBytes || 536870912;
+                Dashboard.hideLoadingMsg();
+            }).catch(function (err) {
+                console.error('[JellyFederation] Failed to load config:', err);
+                Dashboard.hideLoadingMsg();
+            });
+        },
 
-            saveConfig: function (form) {
-                var self = this;
-                Dashboard.showLoadingMsg();
-                ApiClient.getPluginConfiguration(self.pluginId).then(function (config) {
-                    config = config || {};
-                    config.FederationServerUrl = form.querySelector('#federationServerUrl').value.trim();
-                    config.ServerId = form.querySelector('#serverId').value.trim();
-                    config.ApiKey = form.querySelector('#apiKey').value.trim();
-                    config.ServerName = form.querySelector('#serverName').value.trim();
-                    config.PublicJellyfinUrl = form.querySelector('#publicJellyfinUrl').value.trim();
-                    config.DownloadDirectory = form.querySelector('#downloadDirectory').value.trim();
-                    config.OverridePublicIp = form.querySelector('#overridePublicIp').value.trim();
+        saveConfig: function (form) {
+            var self = this;
+            Dashboard.showLoadingMsg();
+            ApiClient.getPluginConfiguration(self.pluginId).then(function (config) {
+                config = config || {};
+                config.FederationServerUrl = form.querySelector('#federationServerUrl').value.trim();
+                config.ServerId = form.querySelector('#serverId').value.trim();
+                config.ApiKey = form.querySelector('#apiKey').value.trim();
+                config.ServerName = form.querySelector('#serverName').value.trim();
+                config.PublicJellyfinUrl = form.querySelector('#publicJellyfinUrl').value.trim();
+                config.DownloadDirectory = form.querySelector('#downloadDirectory').value.trim();
+                config.OverridePublicIp = form.querySelector('#overridePublicIp').value.trim();
 
-                    var parsedPort = parseInt(form.querySelector('#holePunchPort').value, 10);
-                    config.HolePunchPort = Number.isFinite(parsedPort) && parsedPort >= 0 ? parsedPort : 0;
-                    config.PreferQuicForLargeFiles = !!form.querySelector('#preferQuicForLargeFiles').checked;
-                    var parsedThreshold = parseInt(form.querySelector('#largeFileQuicThresholdBytes').value, 10);
-                    config.LargeFileQuicThresholdBytes = Number.isFinite(parsedThreshold) && parsedThreshold > 0
-                        ? parsedThreshold
-                        : 536870912;
+                var parsedPort = parseInt(form.querySelector('#holePunchPort').value, 10);
+                config.HolePunchPort = Number.isFinite(parsedPort) && parsedPort >= 0 ? parsedPort : 0;
+                config.PreferQuicForLargeFiles = !!form.querySelector('#preferQuicForLargeFiles').checked;
+                var parsedThreshold = parseInt(form.querySelector('#largeFileQuicThresholdBytes').value, 10);
+                config.LargeFileQuicThresholdBytes = Number.isFinite(parsedThreshold) && parsedThreshold > 0
+                    ? parsedThreshold
+                    : 536870912;
 
-                    return ApiClient.updatePluginConfiguration(self.pluginId, config);
-                }).then(function (result) {
-                    Dashboard.processPluginConfigurationUpdateResult(result);
-                }).catch(function (err) {
-                    var msg = err && (err.message || JSON.stringify(err)) || 'Unknown error';
-                    console.error('[JellyFederation] Failed to save config:', err);
-                    Dashboard.hideLoadingMsg();
-                    Dashboard.alert({ title: 'JellyFederation', text: 'Save failed — ' + msg });
-                });
-            }
-        };
+                return ApiClient.updatePluginConfiguration(self.pluginId, config);
+            }).then(function (result) {
+                Dashboard.processPluginConfigurationUpdateResult(result);
+            }).catch(function (err) {
+                var msg = err && (err.message || JSON.stringify(err)) || 'Unknown error';
+                console.error('[JellyFederation] Failed to save config:', err);
+                Dashboard.hideLoadingMsg();
+                Dashboard.alert({title: 'JellyFederation', text: 'Save failed — ' + msg});
+            });
+        }
+    };
 
-        document.querySelector('#JellyFederationConfigPage').addEventListener('pageshow', function () {
-            JellyFederationConfig.loadConfig();
-        });
+    document.querySelector('#JellyFederationConfigPage').addEventListener('pageshow', function () {
+        JellyFederationConfig.loadConfig();
+    });
 
-        document.querySelector('#JellyFederationConfigForm').addEventListener('submit', function (e) {
-            e.preventDefault();
-            JellyFederationConfig.saveConfig(this);
-            return false;
-        });
-    </script>
+    document.querySelector('#JellyFederationConfigForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        JellyFederationConfig.saveConfig(this);
+        return false;
+    });
+</script>
 </body>
 </html>

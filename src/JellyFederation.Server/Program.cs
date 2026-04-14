@@ -1,21 +1,19 @@
+using System.Diagnostics;
+using System.Net;
+using System.Reflection;
+using System.Text.Json.Serialization;
 using JellyFederation.Server.Data;
 using JellyFederation.Server.Filters;
 using JellyFederation.Server.Hubs;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Telemetry;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.EntityFrameworkCore;
-using System.Net;
-using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.RateLimiting;
-using System.Threading.RateLimiting;
+using Microsoft.EntityFrameworkCore;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using OpenTelemetry.Metrics;
-using OpenTelemetry.Logs;
-using Microsoft.Extensions.Logging;
-using System.Diagnostics;
-using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.Configure(options =>
@@ -46,12 +44,11 @@ builder.Logging.AddOpenTelemetry(logging =>
     logging.IncludeFormattedMessage = true;
     logging.IncludeScopes = true;
     logging.ParseStateValues = true;
-    logging.SetResourceBuilder(ResourceBuilder.CreateDefault().AddService(telemetryServiceName, serviceVersion: releaseVersion));
+    logging.SetResourceBuilder(ResourceBuilder.CreateDefault()
+        .AddService(telemetryServiceName, serviceVersion: releaseVersion));
 
     if (Uri.TryCreate(telemetryOtlpEndpoint, UriKind.Absolute, out var endpoint))
-    {
         logging.AddOtlpExporter(options => options.Endpoint = endpoint);
-    }
 });
 
 var maxRequestBodySizeMb = builder.Configuration.GetValue<long?>("ServerLimits:MaxRequestBodySizeMb") ?? 100;
@@ -68,12 +65,14 @@ builder.Services.AddSwaggerGen();
 
 builder.Services.AddDbContext<FederationDbContext>(opt =>
     opt.UseSqlite(builder.Configuration.GetConnectionString("Default")
-        ?? "Data Source=federation.db"));
+                  ?? "Data Source=federation.db"));
 
 builder.Services.AddSignalR();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<ServerConnectionTracker>();
 builder.Services.AddSingleton<FileRequestNotifier>();
+builder.Services.AddSingleton<ErrorContractMapper>();
+builder.Services.AddSingleton<SignalRErrorMapper>();
 builder.Services.AddScoped<ApiKeyAuthFilter>();
 builder.Services.AddHostedService<StaleRequestCleanupService>();
 builder.Services.AddOpenTelemetry()
@@ -90,9 +89,7 @@ builder.Services.AddOpenTelemetry()
             .SetSampler(new ParentBasedSampler(new TraceIdRatioBasedSampler(telemetrySamplingRatio)));
 
         if (Uri.TryCreate(telemetryOtlpEndpoint, UriKind.Absolute, out var endpoint))
-        {
             tracing.AddOtlpExporter(options => options.Endpoint = endpoint);
-        }
     })
     .WithMetrics(metrics =>
     {
@@ -105,9 +102,7 @@ builder.Services.AddOpenTelemetry()
             .AddHttpClientInstrumentation();
 
         if (Uri.TryCreate(telemetryOtlpEndpoint, UriKind.Absolute, out var endpoint))
-        {
             metrics.AddOtlpExporter(options => options.Endpoint = endpoint);
-        }
     });
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -133,15 +128,15 @@ builder.Services.AddRateLimiter(options =>
 // CORS: allow the frontend dev server and any configured origin.
 // In production, set AllowedOrigins in appsettings.json.
 var allowedOrigins = builder.Configuration
-    .GetSection("AllowedOrigins")
-    .Get<string[]>()
-    ?? ["http://localhost:5173", "http://localhost:4173"];
+                         .GetSection("AllowedOrigins")
+                         .Get<string[]>()
+                     ?? ["http://localhost:5173", "http://localhost:4173"];
 
 builder.Services.AddCors(opt => opt.AddDefaultPolicy(policy =>
     policy.WithOrigins(allowedOrigins)
-          .AllowAnyHeader()
-          .AllowAnyMethod()
-          .AllowCredentials())); // required for SignalR
+        .AllowAnyHeader()
+        .AllowAnyMethod()
+        .AllowCredentials())); // required for SignalR
 
 var app = builder.Build();
 
@@ -169,7 +164,7 @@ app.Use(async (context, next) =>
     }
 
     var correlationId = context.Request.Headers["X-Correlation-ID"].FirstOrDefault()
-        ?? FederationTelemetry.CreateCorrelationId();
+                        ?? FederationTelemetry.CreateCorrelationId();
 
     using var scope = app.Logger.BeginScope(new Dictionary<string, object?>
     {
@@ -180,7 +175,7 @@ app.Use(async (context, next) =>
         ["release"] = releaseVersion
     });
 
-    await next();
+    await next().ConfigureAwait(false);
 });
 app.UseHttpsRedirection();
 app.UseRateLimiter();

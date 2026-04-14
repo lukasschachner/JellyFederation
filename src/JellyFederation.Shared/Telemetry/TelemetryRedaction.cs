@@ -20,7 +20,9 @@ public static class TelemetryRedaction
         "component",
         "outcome",
         "peer_server",
-        "release"
+        "release",
+        "failure_category",
+        "failure_code"
     ];
 
     public static string? Redact(string? key, string? value)
@@ -55,7 +57,9 @@ public static class TelemetryRedaction
         string component,
         string? outcome = null,
         string? peerServer = null,
-        string? release = null)
+        string? release = null,
+        string? failureCategory = null,
+        string? failureCode = null)
     {
         var values = new List<KeyValuePair<string, object?>>
         {
@@ -64,13 +68,32 @@ public static class TelemetryRedaction
         };
 
         if (!string.IsNullOrWhiteSpace(outcome))
-            values.Add(new("outcome", SafeDimensionValue("outcome", outcome)));
+            values.Add(new KeyValuePair<string, object?>("outcome", SafeDimensionValue("outcome", outcome)));
         if (!string.IsNullOrWhiteSpace(peerServer))
-            values.Add(new("peer_server", SafeDimensionValue("peer_server", peerServer)));
+            values.Add(new KeyValuePair<string, object?>("peer_server", SafeDimensionValue("peer_server", peerServer)));
         if (!string.IsNullOrWhiteSpace(release))
-            values.Add(new("release", SafeDimensionValue("release", release)));
+            values.Add(new KeyValuePair<string, object?>("release", SafeDimensionValue("release", release)));
+        if (!string.IsNullOrWhiteSpace(failureCategory))
+            values.Add(new KeyValuePair<string, object?>("failure_category",
+                SafeDimensionValue("failure_category", failureCategory)));
+        if (!string.IsNullOrWhiteSpace(failureCode))
+            values.Add(new KeyValuePair<string, object?>("failure_code", SafeDimensionValue("failure_code", failureCode)));
 
         return values.ToArray();
+    }
+
+    public static Models.FailureDescriptor SanitizeFailureDescriptor(Models.FailureDescriptor failure)
+    {
+        var details = failure.Details?
+            .ToDictionary(
+                entry => entry.Key,
+                entry => Redact(entry.Key, entry.Value));
+
+        return failure with
+        {
+            Message = SanitizeErrorMessage(failure.Message),
+            Details = details
+        };
     }
 
     private static string SafeDimensionValue(string key, string value)

@@ -5,40 +5,53 @@ using Microsoft.EntityFrameworkCore;
 namespace JellyFederation.Server.Services;
 
 /// <summary>
-/// Periodically scans for file requests stuck in non-terminal states
-/// (Pending, HolePunching, Transferring) and fails them after a timeout.
-/// This handles cases where a plugin crashes mid-transfer and never reports back.
+///     Periodically scans for file requests stuck in non-terminal states
+///     (Pending, HolePunching, Transferring) and fails them after a timeout.
+///     This handles cases where a plugin crashes mid-transfer and never reports back.
 /// </summary>
-public partial class StaleRequestCleanupService(
-    IServiceScopeFactory scopeFactory,
-    ILogger<StaleRequestCleanupService> logger) : BackgroundService
+public partial class StaleRequestCleanupService : BackgroundService
 {
     private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan StaleThreshold = TimeSpan.FromHours(1);
+    private readonly ILogger<StaleRequestCleanupService> _logger;
+    private readonly IServiceScopeFactory _scopeFactory;
+
+    /// <summary>
+    ///     Periodically scans for file requests stuck in non-terminal states
+    ///     (Pending, HolePunching, Transferring) and fails them after a timeout.
+    ///     This handles cases where a plugin crashes mid-transfer and never reports back.
+    /// </summary>
+    public StaleRequestCleanupService(IServiceScopeFactory scopeFactory,
+        ILogger<StaleRequestCleanupService> logger)
+    {
+        _scopeFactory = scopeFactory;
+        _logger = logger;
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        LogCleanupServiceStarted(logger, CheckInterval.TotalMinutes, StaleThreshold.TotalHours);
+        LogCleanupServiceStarted(_logger, CheckInterval.TotalMinutes, StaleThreshold.TotalHours);
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await CleanupStaleRequestsAsync(stoppingToken);
+                await CleanupStaleRequestsAsync(stoppingToken).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                LogCleanupError(logger, ex);
+                LogCleanupError(_logger, ex);
             }
 
-            await Task.Delay(CheckInterval, stoppingToken);
+            await Task.Delay(CheckInterval, stoppingToken).ConfigureAwait(false);
         }
 
-        LogCleanupServiceStopped(logger);
+        LogCleanupServiceStopped(_logger);
     }
 
     private async Task CleanupStaleRequestsAsync(CancellationToken ct)
     {
-        await using var scope = scopeFactory.CreateAsyncScope();
+        var scope = _scopeFactory.CreateAsyncScope();
+        await using var scope1 = scope.ConfigureAwait(false);
         var db = scope.ServiceProvider.GetRequiredService<FederationDbContext>();
         var notifier = scope.ServiceProvider.GetRequiredService<FileRequestNotifier>();
 
@@ -50,15 +63,15 @@ public partial class StaleRequestCleanupService(
                  r.Status == FileRequestStatus.HolePunching ||
                  r.Status == FileRequestStatus.Transferring) &&
                 r.CreatedAt < cutoff)
-            .ToListAsync(ct);
+            .ToListAsync(ct).ConfigureAwait(false);
 
         if (stale.Count == 0)
         {
-            LogNoStaleRequests(logger);
+            LogNoStaleRequests(_logger);
             return;
         }
 
-        LogCleaningUpStale(logger, stale.Count, StaleThreshold.TotalHours);
+        LogCleaningUpStale(_logger, stale.Count, StaleThreshold.TotalHours);
 
         foreach (var req in stale)
         {
@@ -67,18 +80,19 @@ public partial class StaleRequestCleanupService(
             req.FailureReason =
                 $"Request timed out after {StaleThreshold.TotalHours:0} hour(s) in {previousStatus} state. " +
                 "The plugin may have crashed or lost connectivity.";
-            LogMarkedStaleRequestFailed(logger, req.Id, previousStatus);
+            LogMarkedStaleRequestFailed(_logger, req.Id, previousStatus);
         }
 
-        await db.SaveChangesAsync(ct);
+        await db.SaveChangesAsync(ct).ConfigureAwait(false);
 
         foreach (var req in stale)
-        {
-            try { await notifier.NotifyStatusAsync(req); }
+            try
+            {
+                await notifier.NotifyStatusAsync(req).ConfigureAwait(false);
+            }
             catch (Exception ex)
             {
-                LogNotifyFailed(logger, ex, req.Id);
+                LogNotifyFailed(_logger, ex, req.Id);
             }
-        }
     }
 }

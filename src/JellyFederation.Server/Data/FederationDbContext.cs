@@ -3,8 +3,12 @@ using Microsoft.EntityFrameworkCore;
 
 namespace JellyFederation.Server.Data;
 
-public class FederationDbContext(DbContextOptions<FederationDbContext> options) : DbContext(options)
+public class FederationDbContext : DbContext
 {
+    public FederationDbContext(DbContextOptions<FederationDbContext> options) : base(options)
+    {
+    }
+
     public DbSet<RegisteredServer> Servers => Set<RegisteredServer>();
     public DbSet<MediaItem> MediaItems => Set<MediaItem>();
     public DbSet<Invitation> Invitations => Set<Invitation>();
@@ -17,17 +21,17 @@ public class FederationDbContext(DbContextOptions<FederationDbContext> options) 
             e.HasKey(s => s.Id);
             e.HasIndex(s => s.ApiKey).IsUnique();
             e.HasMany(s => s.MediaItems)
-             .WithOne(m => m.Server)
-             .HasForeignKey(m => m.ServerId)
-             .OnDelete(DeleteBehavior.Cascade);
+                .WithOne(m => m.Server)
+                .HasForeignKey(m => m.ServerId)
+                .OnDelete(DeleteBehavior.Cascade);
             e.HasMany(s => s.SentInvitations)
-             .WithOne(i => i.FromServer)
-             .HasForeignKey(i => i.FromServerId)
-             .OnDelete(DeleteBehavior.Restrict);
+                .WithOne(i => i.FromServer)
+                .HasForeignKey(i => i.FromServerId)
+                .OnDelete(DeleteBehavior.Restrict);
             e.HasMany(s => s.ReceivedInvitations)
-             .WithOne(i => i.ToServer)
-             .HasForeignKey(i => i.ToServerId)
-             .OnDelete(DeleteBehavior.Restrict);
+                .WithOne(i => i.ToServer)
+                .HasForeignKey(i => i.ToServerId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<MediaItem>(e =>
@@ -39,13 +43,13 @@ public class FederationDbContext(DbContextOptions<FederationDbContext> options) 
         modelBuilder.Entity<FileRequest>(e =>
         {
             e.HasOne(r => r.RequestingServer)
-             .WithMany()
-             .HasForeignKey(r => r.RequestingServerId)
-             .OnDelete(DeleteBehavior.Restrict);
+                .WithMany()
+                .HasForeignKey(r => r.RequestingServerId)
+                .OnDelete(DeleteBehavior.Restrict);
             e.HasOne(r => r.OwningServer)
-             .WithMany()
-             .HasForeignKey(r => r.OwningServerId)
-             .OnDelete(DeleteBehavior.Restrict);
+                .WithMany()
+                .HasForeignKey(r => r.OwningServerId)
+                .OnDelete(DeleteBehavior.Restrict);
             e.Property(r => r.BytesTransferred).HasDefaultValue(0L);
         });
     }

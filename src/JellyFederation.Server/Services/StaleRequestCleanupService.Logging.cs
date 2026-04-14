@@ -1,5 +1,4 @@
 using JellyFederation.Shared.Models;
-using Microsoft.Extensions.Logging;
 
 namespace JellyFederation.Server.Services;
 
@@ -14,7 +13,8 @@ public partial class StaleRequestCleanupService
     [LoggerMessage(3, LogLevel.Warning, "Failed to notify parties for stale request {Id}")]
     private static partial void LogNotifyFailed(ILogger logger, Exception ex, Guid id);
 
-    [LoggerMessage(4, LogLevel.Information, "Stale request cleanup service started (interval={IntervalMinutes}m, threshold={ThresholdHours}h)")]
+    [LoggerMessage(4, LogLevel.Information,
+        "Stale request cleanup service started (interval={IntervalMinutes}m, threshold={ThresholdHours}h)")]
     private static partial void LogCleanupServiceStarted(ILogger logger, double intervalMinutes, double thresholdHours);
 
     [LoggerMessage(5, LogLevel.Information, "Stale request cleanup service stopped")]

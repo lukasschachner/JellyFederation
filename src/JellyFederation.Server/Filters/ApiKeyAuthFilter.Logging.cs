@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Logging;
-
 namespace JellyFederation.Server.Filters;
 
 public partial class ApiKeyAuthFilter

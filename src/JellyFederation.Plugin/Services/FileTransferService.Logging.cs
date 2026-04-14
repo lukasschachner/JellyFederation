@@ -1,15 +1,17 @@
-using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 using System.Net;
 using JellyFederation.Shared.Models;
 using JellyFederation.Shared.Telemetry;
-using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 
 namespace JellyFederation.Plugin.Services;
 
 public partial class FileTransferService
 {
-    private static void TagSpanOutcome(string outcome, Exception? ex = null) =>
+    private static void TagSpanOutcome(string outcome, Exception? ex = null)
+    {
         FederationTelemetry.SetOutcome(Activity.Current, outcome, ex);
+    }
 
     [LoggerMessage(1, LogLevel.Warning, "Invalid Jellyfin item ID format: {Id}")]
     private static partial void LogInvalidItemId(ILogger logger, string id);
@@ -101,4 +103,13 @@ public partial class FileTransferService
         ILogger logger,
         Guid id,
         string reason);
+
+    [LoggerMessage(26, LogLevel.Warning,
+        "Operation failure descriptor for request {Id}: code={Code}, category={Category}, message={Message}")]
+    private static partial void LogOperationFailureDescriptor(
+        ILogger logger,
+        Guid id,
+        string code,
+        string category,
+        string message);
 }

@@ -1,20 +1,31 @@
+using JellyFederation.Plugin.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using JellyFederation.Plugin.Configuration;
 
 namespace JellyFederation.Plugin.Services;
 
 /// <summary>
-/// Logs telemetry configuration at startup.
+///     Logs telemetry configuration at startup.
 /// </summary>
-public sealed class TelemetryBootstrapService(
-    IPluginConfigurationProvider configProvider,
-    ILogger<TelemetryBootstrapService> logger) : IHostedService
+public sealed class TelemetryBootstrapService : IHostedService
 {
+    private readonly IPluginConfigurationProvider _configProvider;
+    private readonly ILogger<TelemetryBootstrapService> _logger;
+
+    /// <summary>
+    ///     Logs telemetry configuration at startup.
+    /// </summary>
+    public TelemetryBootstrapService(IPluginConfigurationProvider configProvider,
+        ILogger<TelemetryBootstrapService> logger)
+    {
+        _configProvider = configProvider;
+        _logger = logger;
+    }
+
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        var config = configProvider.GetConfiguration();
-        logger.LogInformation(
+        var config = _configProvider.GetConfiguration();
+        _logger.LogInformation(
             "Telemetry configuration loaded: endpoint={Endpoint}, tracing={TracingEnabled}, metrics={MetricsEnabled}, logs={LogsEnabled}",
             config.TelemetryOtlpEndpoint,
             config.EnableTracing,
@@ -23,5 +34,8 @@ public sealed class TelemetryBootstrapService(
         return Task.CompletedTask;
     }
 
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
 }
