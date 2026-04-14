@@ -13,7 +13,6 @@ namespace JellyFederation.Server.Migrations
             migrationBuilder.AddColumn<bool>(
                 name: "IsRequestable",
                 table: "MediaItems",
-                type: "INTEGER",
                 nullable: false,
                 defaultValue: true);
         }

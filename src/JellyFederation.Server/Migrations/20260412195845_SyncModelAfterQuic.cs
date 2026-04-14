@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -14,38 +14,32 @@ namespace JellyFederation.Server.Migrations
             migrationBuilder.AddColumn<long>(
                 name: "BytesTransferred",
                 table: "FileRequests",
-                type: "INTEGER",
                 nullable: false,
                 defaultValue: 0L);
 
             migrationBuilder.AddColumn<int>(
                 name: "FailureCategory",
                 table: "FileRequests",
-                type: "INTEGER",
                 nullable: true);
 
             migrationBuilder.AddColumn<int>(
                 name: "SelectedTransportMode",
                 table: "FileRequests",
-                type: "INTEGER",
                 nullable: true);
 
             migrationBuilder.AddColumn<long>(
                 name: "TotalBytes",
                 table: "FileRequests",
-                type: "INTEGER",
                 nullable: true);
 
             migrationBuilder.AddColumn<DateTime>(
                 name: "TransferStartedAt",
                 table: "FileRequests",
-                type: "TEXT",
                 nullable: true);
 
             migrationBuilder.AddColumn<int>(
                 name: "TransportSelectionReason",
                 table: "FileRequests",
-                type: "INTEGER",
                 nullable: true);
         }
 
