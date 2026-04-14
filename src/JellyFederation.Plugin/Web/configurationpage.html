@@ -171,8 +171,11 @@
         saveConfig: function (form) {
             var self = this;
             Dashboard.showLoadingMsg();
+            // Fetch existing config first so we preserve fields not managed by this form
+            // (e.g. telemetry settings), then overwrite only our fields before saving.
             ApiClient.getPluginConfiguration(self.pluginId).then(function (config) {
                 config = config || {};
+
                 config.FederationServerUrl = form.querySelector('#federationServerUrl').value.trim();
                 config.ServerId = form.querySelector('#serverId').value.trim();
                 config.ApiKey = form.querySelector('#apiKey').value.trim();
@@ -190,8 +193,9 @@
                     : 536870912;
 
                 return ApiClient.updatePluginConfiguration(self.pluginId, config);
-            }).then(function (result) {
-                Dashboard.processPluginConfigurationUpdateResult(result);
+            }).then(function () {
+                Dashboard.hideLoadingMsg();
+                Dashboard.alert({title: 'JellyFederation', text: 'Settings saved.'});
             }).catch(function (err) {
                 var msg = err && (err.message || JSON.stringify(err)) || 'Unknown error';
                 console.error('[JellyFederation] Failed to save config:', err);
