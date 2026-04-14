@@ -1,4 +1,4 @@
-using JellyFederation.Server.Data;
+using JellyFederation.Data;
 using JellyFederation.Shared.Models;
 using Microsoft.EntityFrameworkCore;
 

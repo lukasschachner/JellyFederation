@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace JellyFederation.Server.Migrations
+namespace JellyFederation.Migrations.PostgreSQL
 {
     /// <inheritdoc />
     public partial class InitialCreate : Migration

@@ -3,7 +3,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace JellyFederation.Server.Migrations
+namespace JellyFederation.Migrations.Sqlite
 {
     /// <inheritdoc />
     public partial class SyncModelAfterQuic : Migration

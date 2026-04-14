@@ -2,7 +2,7 @@
 
 #nullable disable
 
-namespace JellyFederation.Server.Migrations
+namespace JellyFederation.Migrations.PostgreSQL
 {
     /// <inheritdoc />
     public partial class AddTransferTransportMetadata : Migration

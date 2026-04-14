@@ -2,7 +2,7 @@
 
 #nullable disable
 
-namespace JellyFederation.Server.Migrations
+namespace JellyFederation.Migrations.Sqlite
 {
     /// <inheritdoc />
     public partial class AddIsRequestable : Migration

@@ -1,5 +1,8 @@
 <Solution>
     <Folder Name="/src/">
+        <Project Path="src/JellyFederation.Data/JellyFederation.Data.csproj"/>
+        <Project Path="src/JellyFederation.Migrations.PostgreSQL/JellyFederation.Migrations.PostgreSQL.csproj"/>
+        <Project Path="src/JellyFederation.Migrations.Sqlite/JellyFederation.Migrations.Sqlite.csproj"/>
         <Project Path="src/JellyFederation.Plugin/JellyFederation.Plugin.csproj"/>
         <Project Path="src/JellyFederation.Server/JellyFederation.Server.csproj"/>
         <Project Path="src/JellyFederation.Shared/JellyFederation.Shared.csproj"/>

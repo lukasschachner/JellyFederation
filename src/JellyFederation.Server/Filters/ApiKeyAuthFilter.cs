@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using JellyFederation.Server.Data;
+using JellyFederation.Data;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Models;
 using JellyFederation.Shared.Telemetry;

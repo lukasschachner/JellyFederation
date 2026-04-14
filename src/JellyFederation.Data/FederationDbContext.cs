@@ -1,7 +1,7 @@
 using JellyFederation.Shared.Models;
 using Microsoft.EntityFrameworkCore;
 
-namespace JellyFederation.Server.Data;
+namespace JellyFederation.Data;
 
 public class FederationDbContext : DbContext
 {
@@ -50,7 +50,6 @@ public class FederationDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(r => r.OwningServerId)
                 .OnDelete(DeleteBehavior.Restrict);
-            e.Property(r => r.BytesTransferred).HasDefaultValue(0L);
         });
     }
 }

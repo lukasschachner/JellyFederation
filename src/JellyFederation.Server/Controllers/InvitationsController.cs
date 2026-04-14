@@ -1,4 +1,4 @@
-using JellyFederation.Server.Data;
+using JellyFederation.Data;
 using JellyFederation.Server.Filters;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Dtos;

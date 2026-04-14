@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Net;
-using JellyFederation.Server.Data;
+using JellyFederation.Data;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Models;
 using JellyFederation.Shared.SignalR;
