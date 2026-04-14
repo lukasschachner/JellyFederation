@@ -6,6 +6,9 @@ on:
     paths:
       - "src/JellyFederation.Server/**"
       - "src/JellyFederation.Shared/**"
+      - "src/JellyFederation.Data/**"
+      - "src/JellyFederation.Migrations.Sqlite/**"
+      - "src/JellyFederation.Migrations.PostgreSQL/**"
       - ".github/workflows/docker.yaml"
   release:
     types: [published]
