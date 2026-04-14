@@ -10,7 +10,7 @@ namespace JellyFederation.Plugin;
 public class FederationPlugin : BasePlugin<PluginConfiguration>, IHasWebPages, IPluginConfigurationProvider
 {
     public const string PluginName = "JellyFederation";
-    public static readonly Guid PluginGuid = new("a1b2c3d4-e5f6-7890-abcd-ef1234567890");
+    public static readonly Guid PluginGuid = new("e5c0cda1-805e-41e2-9654-e17143dc31a1");
 
     public FederationPlugin(IApplicationPaths paths, IXmlSerializer serializer)
         : base(paths, serializer)

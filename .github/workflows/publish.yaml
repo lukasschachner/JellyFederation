@@ -1,10 +1,96 @@
-name: "🚀 Publish Plugin"
+name: "Publish Plugin"
 
 on:
   release:
     types: [published]
-  workflow_dispatch:
 
 jobs:
-  call:
-    uses: jellyfin/jellyfin-meta-plugins/.github/workflows/publish.yaml@master
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Push back to main after updating manifest.json
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Get version from tag
+        id: version
+        # Strips leading "v" so "v1.0.0.0" → "1.0.0.0"
+        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Build and publish
+        run: |
+          dotnet publish src/JellyFederation.Plugin/JellyFederation.Plugin.csproj \
+            --configuration Release \
+            --output dist/ \
+            /p:Version=${{ steps.version.outputs.version }}
+
+      - name: Package zip
+        run: |
+          cd dist
+          zip -j ../jellyfederation_${{ steps.version.outputs.version }}.zip *.dll
+
+      - name: Compute MD5 checksum
+        id: checksum
+        run: |
+          echo "md5=$(md5sum jellyfederation_${{ steps.version.outputs.version }}.zip | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+
+      - name: Upload zip to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: jellyfederation_${{ steps.version.outputs.version }}.zip
+
+      - name: Update manifest.json
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CHECKSUM: ${{ steps.checksum.outputs.md5 }}
+          TAG: ${{ github.ref_name }}
+          CHANGELOG: ${{ github.event.release.body }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, datetime
+
+          version   = os.environ["VERSION"]
+          checksum  = os.environ["CHECKSUM"]
+          tag       = os.environ["TAG"]
+          changelog = os.environ.get("CHANGELOG", "").strip()
+          timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          source_url = (
+              f"https://github.com/lukasschachner/JellyFederation"
+              f"/releases/download/{tag}/jellyfederation_{version}.zip"
+          )
+
+          with open("manifest.json") as f:
+              manifest = json.load(f)
+
+          new_version = {
+              "version":   version,
+              "changelog": changelog,
+              "targetAbi": "10.11.0.0",
+              "sourceUrl": source_url,
+              "checksum":  checksum,
+              "timestamp": timestamp,
+          }
+
+          # Newest version first
+          manifest[0]["versions"].insert(0, new_version)
+
+          with open("manifest.json", "w") as f:
+              json.dump(manifest, f, indent=2)
+              f.write("\n")
+          EOF
+
+      - name: Commit updated manifest.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add manifest.json
+          git commit -m "chore: update manifest.json for ${{ github.ref_name }}"
+          git push origin HEAD:main

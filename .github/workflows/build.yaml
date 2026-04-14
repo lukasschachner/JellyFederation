@@ -1,4 +1,4 @@
-name: "🏗️ Build Plugin"
+name: "Build Plugin"
 
 on:
   push:
@@ -12,5 +12,17 @@ on:
   workflow_dispatch:
 
 jobs:
-  call:
-    uses: jellyfin/jellyfin-meta-plugins/.github/workflows/build.yaml@master
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Build
+        run: |
+          dotnet publish src/JellyFederation.Plugin/JellyFederation.Plugin.csproj \
+            --configuration Release \
+            --output dist/

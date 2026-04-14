@@ -1,0 +1,11 @@
+[
+  {
+    "guid": "e5c0cda1-805e-41e2-9654-e17143dc31a1",
+    "name": "JellyFederation",
+    "description": "Federation media sharing between Jellyfin servers",
+    "overview": "Federation media sharing between Jellyfin servers",
+    "owner": "lukasschachner",
+    "category": "General",
+    "versions": []
+  }
+]
