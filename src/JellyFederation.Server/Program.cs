@@ -62,9 +62,17 @@ builder.Services.AddControllers()
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+var dbProvider = builder.Configuration.GetValue<string>("Database:Provider") ?? "Sqlite";
+var connStr = builder.Configuration.GetConnectionString("Default");
+
 builder.Services.AddDbContext<FederationDbContext>(opt =>
-    opt.UseSqlite(builder.Configuration.GetConnectionString("Default")
-                  ?? "Data Source=federation.db"));
+{
+    if (dbProvider.Equals("PostgreSQL", StringComparison.OrdinalIgnoreCase))
+        opt.UseNpgsql(connStr ?? throw new InvalidOperationException(
+            "ConnectionStrings:Default is required when Database:Provider is PostgreSQL"));
+    else
+        opt.UseSqlite(connStr ?? "Data Source=federation.db");
+});
 
 builder.Services.AddSignalR();
 builder.Services.AddMemoryCache();
