@@ -221,7 +221,8 @@ public partial class FederationHub : Hub
                     message.UdpPort,
                     message.SupportsQuic,
                     message.LargeFileThresholdBytes,
-                    out var candidates))
+                    out var candidates,
+                    message.SupportsIce))
                 await DispatchHolePunch(request, candidates).ConfigureAwait(false);
 
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
@@ -319,6 +320,28 @@ public partial class FederationHub : Hub
             return;
         }
 
+        // If both peers support WebRTC ICE, bypass hole-punch and start ICE negotiation instead.
+        if (sender.SupportsIce && receiver.SupportsIce)
+        {
+            request.SelectedTransportMode = TransferTransportMode.WebRtc;
+            request.TransportSelectionReason = TransferSelectionReason.IceNegotiated;
+            request.Status = FileRequestStatus.HolePunching;
+            await _db.SaveChangesAsync().ConfigureAwait(false);
+
+            await Clients.Client(sender.ConnectionId).SendAsync(
+                "IceNegotiateStart",
+                new IceNegotiateStart(request.Id, IceRole.Offerer)).ConfigureAwait(false);
+
+            await Clients.Client(receiver.ConnectionId).SendAsync(
+                "IceNegotiateStart",
+                new IceNegotiateStart(request.Id, IceRole.Answerer)).ConfigureAwait(false);
+
+            LogIceNegotiationStarted(_logger, request.Id);
+            LogTransportModeSelected(_logger, request.Id, TransferTransportMode.WebRtc, TransferSelectionReason.IceNegotiated);
+            FederationMetrics.RecordOperation("file.transfer.mode.webrtc", "server", "selected", TimeSpan.Zero);
+            return;
+        }
+
         var senderIp = _tracker.GetPublicIp(sender.ConnectionId);
         var receiverIp = _tracker.GetPublicIp(receiver.ConnectionId);
 
@@ -364,6 +387,96 @@ public partial class FederationHub : Hub
             "server",
             "selected",
             TimeSpan.Zero);
+    }
+
+    /// <summary>
+    ///     Forwards an ICE signal (offer, answer, or trickle candidate) from one peer to the other.
+    ///     The server treats the payload as opaque — it only routes by FileRequestId.
+    /// </summary>
+    public async Task ForwardIceSignal(IceSignal signal)
+    {
+        var senderId = _tracker.GetServerId(Context.ConnectionId);
+        if (senderId is null)
+        {
+            LogForwardIceSignalUnknownConnection(_logger, Context.ConnectionId, signal.FileRequestId);
+            return;
+        }
+
+        var request = await _db.FileRequests.FindAsync(signal.FileRequestId).ConfigureAwait(false);
+        if (request is null)
+        {
+            LogForwardIceSignalNotFound(_logger, signal.FileRequestId);
+            return;
+        }
+
+        // Determine the other peer's server ID
+        var targetServerId = senderId.Value == request.OwningServerId
+            ? request.RequestingServerId
+            : request.OwningServerId;
+
+        var targetConnectionId = _tracker.GetConnectionId(targetServerId);
+        if (targetConnectionId is null)
+        {
+            LogForwardIceSignalPeerOffline(_logger, signal.FileRequestId, targetServerId);
+            return;
+        }
+
+        await Clients.Client(targetConnectionId).SendAsync("IceSignal", signal).ConfigureAwait(false);
+        LogForwardedIceSignal(_logger, signal.FileRequestId, signal.Type.ToString(), senderId.Value, targetServerId);
+    }
+
+    /// <summary>
+    ///     Receives a relay chunk from the sender plugin and forwards it to the receiver plugin.
+    ///     Used when direct ICE negotiation fails. The server never buffers more than one chunk.
+    /// </summary>
+    public async Task RelaySendChunk(RelayChunk chunk)
+    {
+        var senderId = _tracker.GetServerId(Context.ConnectionId);
+        if (senderId is null)
+        {
+            LogRelaySendChunkUnknownConnection(_logger, Context.ConnectionId, chunk.FileRequestId);
+            return;
+        }
+
+        var request = await _db.FileRequests.FindAsync(chunk.FileRequestId).ConfigureAwait(false);
+        if (request is null)
+        {
+            LogRelaySendChunkNotFound(_logger, chunk.FileRequestId);
+            return;
+        }
+
+        var receiverServerId = request.RequestingServerId;
+        var receiverConnectionId = _tracker.GetConnectionId(receiverServerId);
+        if (receiverConnectionId is null)
+        {
+            LogRelaySendChunkReceiverOffline(_logger, chunk.FileRequestId, receiverServerId);
+            return;
+        }
+
+        await Clients.Client(receiverConnectionId).SendAsync("RelayReceiveChunk", chunk).ConfigureAwait(false);
+        LogRelayChunkForwarded(_logger, chunk.FileRequestId, chunk.ChunkIndex, chunk.IsEof);
+    }
+
+    /// <summary>
+    ///     Notifies the receiver plugin that relay mode has been engaged by the sender.
+    /// </summary>
+    public async Task ForwardRelayTransferStart(RelayTransferStart message)
+    {
+        var senderId = _tracker.GetServerId(Context.ConnectionId);
+        if (senderId is null) return;
+
+        var request = await _db.FileRequests.FindAsync(message.FileRequestId).ConfigureAwait(false);
+        if (request is null) return;
+
+        var targetServerId = senderId.Value == request.OwningServerId
+            ? request.RequestingServerId
+            : request.OwningServerId;
+
+        var targetConnectionId = _tracker.GetConnectionId(targetServerId);
+        if (targetConnectionId is null) return;
+
+        await Clients.Client(targetConnectionId).SendAsync("RelayTransferStart", message).ConfigureAwait(false);
+        LogRelayTransferStartForwarded(_logger, message.FileRequestId, targetServerId);
     }
 
     private async Task<TransferSelection> SelectTransportModeAsync(

@@ -7,7 +7,10 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.IO.Pipelines;
+using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 using JellyFederation.Plugin.Configuration;
 using JellyFederation.Shared.Models;
 using JellyFederation.Shared.SignalR;
@@ -15,6 +18,7 @@ using JellyFederation.Shared.Telemetry;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
+using SIPSorcery.Net;
 
 namespace JellyFederation.Plugin.Services;
 
@@ -43,6 +47,10 @@ public partial class FileTransferService
     // Active transfer cancellation tokens keyed by fileRequestId
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource>
         _activeCts = new();
+
+    // Relay chunk queues keyed by fileRequestId — populated by SignalR handler, drained by ReceiveRelayAsync
+    private readonly ConcurrentDictionary<Guid, Channel<RelayChunk>>
+        _relayQueues = new();
 
     private readonly IPluginConfigurationProvider _configProvider;
     private readonly HttpClient _http;
@@ -805,6 +813,407 @@ public partial class FileTransferService
         }
 
         throw new IOException($"Failed to get ACK for seq {seq} after {MaxRetries} attempts");
+    }
+
+    /// <summary>
+    ///     Sends a file over an open WebRTC DataChannel.
+    ///     Protocol: text header JSON → binary chunks → binary EofMagic.
+    /// </summary>
+    public async Task SendDataChannelAsync(
+        Guid fileRequestId,
+        string jellyfinItemId,
+        RTCDataChannel dc,
+        PluginConfiguration config,
+        CancellationToken ct)
+    {
+        var correlationId = FederationTelemetry.CreateCorrelationId();
+        var fileResolution = ResolveSourceFile(jellyfinItemId, correlationId);
+        if (fileResolution.IsFailure)
+        {
+            LogOperationFailureDescriptor(_logger, fileRequestId,
+                fileResolution.Failure!.Code, fileResolution.Failure.Category.ToString(), fileResolution.Failure.Message);
+            return;
+        }
+
+        var fileInfo = fileResolution.RequireValue();
+        LogSendingFile(_logger, fileInfo.Name, fileInfo.Length, new System.Net.IPEndPoint(0, 0));
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _activeCts[fileRequestId] = cts;
+        try
+        {
+            // Header as text so receiver can distinguish it from binary chunks
+            var headerJson = JsonSerializer.Serialize(new FileHeader(fileInfo.Name, fileInfo.Length));
+            dc.send(headerJson);
+
+            var fs = fileInfo.OpenRead();
+            await using var fs1 = fs.ConfigureAwait(false);
+            var buffer = new byte[ChunkSize];
+            int bytesRead;
+            while ((bytesRead = await fs.ReadAsync(buffer, cts.Token).ConfigureAwait(false)) > 0)
+            {
+                cts.Token.ThrowIfCancellationRequested();
+                dc.send(buffer[..bytesRead]);
+            }
+
+            dc.send(EofMagic);
+            LogFileSent(_logger, fileInfo.Name);
+            FederationMetrics.RecordOperation("file.transfer.send.webrtc", "plugin",
+                FederationTelemetry.OutcomeSuccess, TimeSpan.Zero, FederationPlugin.ReleaseVersion);
+        }
+        catch (OperationCanceledException)
+        {
+            LogSendCancelled(_logger, fileRequestId);
+        }
+        finally
+        {
+            _activeCts.TryRemove(fileRequestId, out _);
+        }
+    }
+
+    /// <summary>
+    ///     Receives a file over an open WebRTC DataChannel and writes it to the download directory.
+    /// </summary>
+    public async Task ReceiveDataChannelAsync(
+        Guid fileRequestId,
+        RTCDataChannel dc,
+        PluginConfiguration config,
+        HubConnection connection,
+        CancellationToken ct)
+    {
+        var correlationId = FederationTelemetry.CreateCorrelationId();
+
+        if (string.IsNullOrEmpty(config.DownloadDirectory))
+        {
+            LogDownloadDirNotConfigured(_logger);
+            return;
+        }
+
+        Directory.CreateDirectory(config.DownloadDirectory);
+
+        // Bridge the DataChannel onmessage callback into an async-friendly channel.
+        // Protocol param is ignored — we distinguish header (first message = UTF-8 JSON)
+        // from chunks (binary) and EOF (EofMagic) by position and content.
+        var pipe = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
+        dc.onmessage += (_, _, data) => pipe.Writer.TryWrite(data);
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _activeCts[fileRequestId] = cts;
+
+        string? filePath = null;
+        FileStream? fs = null;
+        var receivedEof = false;
+        long totalBytes = 0;
+        long bytesReceived = 0;
+        var lastProgressReport = DateTime.UtcNow;
+
+        try
+        {
+            // First message is always the JSON header (UTF-8 encoded, sent as text or binary)
+            var headerBytes = await pipe.Reader.ReadAsync(cts.Token).ConfigureAwait(false);
+            var header = JsonSerializer.Deserialize<FileHeader>(Encoding.UTF8.GetString(headerBytes));
+            if (header is null) return;
+
+            filePath = GetUniqueFilePath(Path.Combine(config.DownloadDirectory, header.FileName));
+            fs = File.Create(filePath);
+            totalBytes = header.FileSize;
+            LogReceivingFile(_logger, header.FileName, header.FileSize, filePath);
+
+            while (true)
+            {
+                var data = await pipe.Reader.ReadAsync(cts.Token).ConfigureAwait(false);
+
+                if (data.Length == EofMagic.Length && data.AsSpan().SequenceEqual(EofMagic))
+                {
+                    LogReceivedEof(_logger);
+                    if (totalBytes > 0)
+                        await ReportProgressAsync(connection, fileRequestId, totalBytes, totalBytes)
+                            .ConfigureAwait(false);
+                    receivedEof = true;
+                    break;
+                }
+
+                await fs.WriteAsync(data, cts.Token).ConfigureAwait(false);
+                bytesReceived += data.Length;
+
+                if (totalBytes > 0 && (DateTime.UtcNow - lastProgressReport).TotalSeconds >= 1)
+                {
+                    lastProgressReport = DateTime.UtcNow;
+                    await ReportProgressAsync(connection, fileRequestId, bytesReceived, totalBytes)
+                        .ConfigureAwait(false);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            LogReceiveCancelled(_logger, fileRequestId);
+        }
+        finally
+        {
+            _activeCts.TryRemove(fileRequestId, out _);
+            pipe.Writer.TryComplete();
+
+            if (fs is not null)
+            {
+                await fs.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+                await fs.DisposeAsync().ConfigureAwait(false);
+            }
+
+            if (!receivedEof && filePath is not null && File.Exists(filePath))
+                try
+                {
+                    File.Delete(filePath);
+                    LogDeletedIncompleteFile(_logger, filePath);
+                }
+                catch (Exception ex)
+                {
+                    LogCouldNotDeleteIncompleteFile(_logger, ex, filePath);
+                }
+        }
+
+        if (receivedEof && filePath is not null && File.Exists(filePath))
+        {
+            LogFileSaved(_logger, filePath);
+            TriggerLibraryScan(filePath, config.DownloadDirectory);
+            await MarkCompleteAsync(fileRequestId, correlationId, CancellationToken.None).ConfigureAwait(false);
+            FederationMetrics.RecordOperation("file.transfer.receive.webrtc", "plugin",
+                FederationTelemetry.OutcomeSuccess, TimeSpan.Zero, FederationPlugin.ReleaseVersion);
+        }
+    }
+
+    /// <summary>
+    ///     Sends a file as relay chunks through the federation server when direct ICE fails.
+    /// </summary>
+    public async Task SendRelayAsync(
+        Guid fileRequestId,
+        string jellyfinItemId,
+        HubConnection connection,
+        PluginConfiguration config,
+        CancellationToken ct)
+    {
+        var correlationId = FederationTelemetry.CreateCorrelationId();
+        var fileResolution = ResolveSourceFile(jellyfinItemId, correlationId);
+        if (fileResolution.IsFailure)
+        {
+            LogOperationFailureDescriptor(_logger, fileRequestId,
+                fileResolution.Failure!.Code, fileResolution.Failure.Category.ToString(), fileResolution.Failure.Message);
+            return;
+        }
+
+        var fileInfo = fileResolution.RequireValue();
+        LogSendingFile(_logger, fileInfo.Name, fileInfo.Length, new System.Net.IPEndPoint(0, 0));
+
+        try
+        {
+            var fs = fileInfo.OpenRead();
+            await using var fs1 = fs.ConfigureAwait(false);
+            var buffer = new byte[ChunkSize];
+            int bytesRead;
+            long chunkIndex = 0;
+
+            while ((bytesRead = await fs.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+            {
+                ct.ThrowIfCancellationRequested();
+                await connection.SendAsync("RelaySendChunk",
+                    new RelayChunk(fileRequestId, chunkIndex, false, buffer[..bytesRead]),
+                    ct).ConfigureAwait(false);
+                chunkIndex++;
+            }
+
+            // EOF marker
+            await connection.SendAsync("RelaySendChunk",
+                new RelayChunk(fileRequestId, chunkIndex, true, []),
+                ct).ConfigureAwait(false);
+
+            LogFileSent(_logger, fileInfo.Name);
+            FederationMetrics.RecordOperation("file.transfer.send.relay", "plugin",
+                FederationTelemetry.OutcomeSuccess, TimeSpan.Zero, FederationPlugin.ReleaseVersion);
+        }
+        catch (OperationCanceledException)
+        {
+            LogSendCancelled(_logger, fileRequestId);
+        }
+    }
+
+    /// <summary>
+    ///     Receives relay chunks forwarded from the federation server and writes to disk.
+    ///     Chunks are delivered via <see cref="EnqueueRelayChunk"/> from the SignalR handler.
+    /// </summary>
+    public async Task ReceiveRelayAsync(
+        Guid fileRequestId,
+        HubConnection connection,
+        PluginConfiguration config,
+        CancellationToken ct)
+    {
+        var correlationId = FederationTelemetry.CreateCorrelationId();
+
+        if (string.IsNullOrEmpty(config.DownloadDirectory))
+        {
+            LogDownloadDirNotConfigured(_logger);
+            return;
+        }
+
+        Directory.CreateDirectory(config.DownloadDirectory);
+
+        var queue = Channel.CreateUnbounded<RelayChunk>(new UnboundedChannelOptions { SingleReader = true });
+        _relayQueues[fileRequestId] = queue;
+
+        string? filePath = null;
+        FileStream? fs = null;
+        var receivedEof = false;
+        long totalBytes = 0;
+        long bytesReceived = 0;
+
+        try
+        {
+            // First chunk carries the file header JSON in its Data field as a special convention:
+            // relay doesn't have a separate header frame — the sender prepends file info in the
+            // first chunk (Data = JSON bytes of FileHeader, ChunkIndex = -1).
+            // For the relay path we wait for a header chunk first.
+            var firstChunk = await queue.Reader.ReadAsync(ct).ConfigureAwait(false);
+            if (firstChunk.ChunkIndex == -1)
+            {
+                var header = JsonSerializer.Deserialize<FileHeader>(firstChunk.Data);
+                if (header is null) return;
+                filePath = GetUniqueFilePath(Path.Combine(config.DownloadDirectory, header.FileName));
+                fs = File.Create(filePath);
+                totalBytes = header.FileSize;
+                LogReceivingFile(_logger, header.FileName, header.FileSize, filePath);
+            }
+            else
+            {
+                // No header chunk — create a temp file name
+                filePath = GetUniqueFilePath(Path.Combine(config.DownloadDirectory, $"relay-{fileRequestId}"));
+                fs = File.Create(filePath);
+                if (!firstChunk.IsEof)
+                {
+                    await fs.WriteAsync(firstChunk.Data, ct).ConfigureAwait(false);
+                    bytesReceived += firstChunk.Data.Length;
+                }
+                else
+                {
+                    receivedEof = true;
+                }
+            }
+
+            while (!receivedEof)
+            {
+                var chunk = await queue.Reader.ReadAsync(ct).ConfigureAwait(false);
+                if (chunk.IsEof)
+                {
+                    receivedEof = true;
+                    if (totalBytes > 0)
+                        await ReportProgressAsync(connection, fileRequestId, totalBytes, totalBytes)
+                            .ConfigureAwait(false);
+                    break;
+                }
+
+                if (fs is not null)
+                    await fs.WriteAsync(chunk.Data, ct).ConfigureAwait(false);
+                bytesReceived += chunk.Data.Length;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            LogReceiveCancelled(_logger, fileRequestId);
+        }
+        finally
+        {
+            _relayQueues.TryRemove(fileRequestId, out _);
+
+            if (fs is not null)
+            {
+                await fs.FlushAsync(CancellationToken.None).ConfigureAwait(false);
+                await fs.DisposeAsync().ConfigureAwait(false);
+            }
+
+            if (!receivedEof && filePath is not null && File.Exists(filePath))
+                try
+                {
+                    File.Delete(filePath);
+                    LogDeletedIncompleteFile(_logger, filePath);
+                }
+                catch (Exception ex)
+                {
+                    LogCouldNotDeleteIncompleteFile(_logger, ex, filePath);
+                }
+        }
+
+        if (receivedEof && filePath is not null && File.Exists(filePath))
+        {
+            LogFileSaved(_logger, filePath);
+            TriggerLibraryScan(filePath, config.DownloadDirectory);
+            await MarkCompleteAsync(fileRequestId, correlationId, CancellationToken.None).ConfigureAwait(false);
+            FederationMetrics.RecordOperation("file.transfer.receive.relay", "plugin",
+                FederationTelemetry.OutcomeSuccess, TimeSpan.Zero, FederationPlugin.ReleaseVersion);
+        }
+    }
+
+    /// <summary>
+    ///     Receives DataChannel data and writes it into a <see cref="PipeWriter"/>.
+    ///     Does NOT write to disk and does NOT trigger a library scan — intended for streaming playback.
+    /// </summary>
+    /// <returns>
+    ///     The <see cref="PipeReader"/> end of the pipe; the caller passes this to
+    ///     <see cref="LocalStreamEndpoint"/> to serve over HTTP.
+    /// </returns>
+    public PipeReader ReceiveStreamingAsync(Guid fileRequestId, RTCDataChannel dc, CancellationToken ct)
+    {
+        var pipe = new Pipe();
+
+        dc.onmessage += (_, _, data) =>
+        {
+            // Skip header and EOF frames — just stream raw bytes to the pipe
+            if (data.Length == EofMagic.Length && data.AsSpan().SequenceEqual(EofMagic))
+            {
+                pipe.Writer.Complete();
+                return;
+            }
+
+            // Skip the first (header) message — it's JSON, not media data
+            // We detect it by checking if it starts with '{' (valid JSON header)
+            if (data.Length > 0 && data[0] == (byte)'{')
+                return;
+
+            var mem = pipe.Writer.GetMemory(data.Length);
+            data.CopyTo(mem);
+            pipe.Writer.Advance(data.Length);
+            _ = pipe.Writer.FlushAsync(ct).AsTask();
+        };
+
+        ct.Register(() => pipe.Writer.Complete(new OperationCanceledException(ct)));
+        LogStreamingReceiveStarted(_logger, fileRequestId);
+        return pipe.Reader;
+    }
+
+    /// <summary>
+    ///     Called by the SignalR handler to deliver a relay chunk to the waiting ReceiveRelayAsync loop.
+    /// </summary>
+    public void EnqueueRelayChunk(RelayChunk chunk)
+    {
+        if (_relayQueues.TryGetValue(chunk.FileRequestId, out var queue))
+            queue.Writer.TryWrite(chunk);
+    }
+
+    private async Task MarkCompleteAsync(Guid fileRequestId, string correlationId, CancellationToken ct)
+    {
+        var cfg = _configProvider.GetConfiguration();
+        var req = new HttpRequestMessage(
+            HttpMethod.Put,
+            $"{cfg.FederationServerUrl.TrimEnd('/')}/api/filerequests/{fileRequestId}/complete");
+        req.Headers.Add("X-Api-Key", cfg.ApiKey);
+        TraceContextPropagation.InjectToHttpRequest(req);
+        TraceContextPropagation.InjectCorrelationId(req.Headers, correlationId);
+        try
+        {
+            var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode)
+                LogMarkCompleteFailed(_logger, fileRequestId, resp.StatusCode);
+        }
+        catch (Exception ex)
+        {
+            LogNotifyCompletionFailed(_logger, ex, fileRequestId);
+        }
     }
 
     private record FileHeader

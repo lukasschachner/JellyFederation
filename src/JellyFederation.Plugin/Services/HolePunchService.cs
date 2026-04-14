@@ -110,7 +110,8 @@ public partial class HolePunchService
             localPort,
             overrideIp ?? "(auto)");
         await connection.SendAsync("ReportHolePunchReady",
-                new HolePunchReady(notification.FileRequestId, localPort, overrideIp, supportsQuic, threshold))
+                new HolePunchReady(notification.FileRequestId, localPort, overrideIp, supportsQuic, threshold,
+                    SupportsIce: true))
             .ConfigureAwait(false);
     }
 
@@ -361,6 +362,14 @@ public partial class HolePunchService
             LogInvalidProbe(_logger, received);
         }
     }
+
+    /// <summary>
+    ///     Returns the Jellyfin item ID stored during PrepareAndSignalReadyAsync,
+    ///     or null if no pending socket exists for this request.
+    ///     Used by the ICE path to hand off the item ID without consuming the socket entry.
+    /// </summary>
+    public string? GetPendingJellyfinItemId(Guid fileRequestId) =>
+        _pendingSockets.TryGetValue(fileRequestId, out var pending) ? pending.JellyfinItemId : null;
 
     public void Cancel(Guid fileRequestId)
     {

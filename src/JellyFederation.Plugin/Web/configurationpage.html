@@ -89,26 +89,41 @@
                 </div>
 
                 <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="stunServer">
+                        STUN Server
+                    </label>
+                    <input id="stunServer" is="emby-input"
+                           name="StunServer" placeholder="stun.l.google.com:19302"
+                           type="text"/>
+                    <div class="fieldDescription">
+                        STUN server used for WebRTC ICE candidate gathering. Leave empty to use the default
+                        (stun.l.google.com:19302). Override for air-gapped or self-hosted deployments.
+                    </div>
+                </div>
+
+                <div class="inputContainer">
                     <label class="inputLabel inputLabelUnfocused" for="overridePublicIp">
-                        Override Public IP (optional)
+                        Override Public IP <span style="font-weight:normal;opacity:0.7">(optional — only needed for old plugin versions)</span>
                     </label>
                     <input id="overridePublicIp" is="emby-input"
                            name="OverridePublicIp" placeholder="203.0.113.25"
                            type="text"/>
                     <div class="fieldDescription">
-                        Leave empty to auto-detect. Set this when running behind NAT/Docker with a known public IP.
+                        Leave empty. Only needed when communicating with peers running older plugin versions
+                        that use UDP hole-punching instead of WebRTC ICE.
                     </div>
                 </div>
 
                 <div class="inputContainer">
                     <label class="inputLabel inputLabelUnfocused" for="holePunchPort">
-                        Hole Punch UDP Port
+                        Hole Punch UDP Port <span style="font-weight:normal;opacity:0.7">(optional — only needed for old plugin versions)</span>
                     </label>
                     <input id="holePunchPort" is="emby-input"
                            min="0" name="HolePunchPort" placeholder="0"
                            type="number"/>
                     <div class="fieldDescription">
-                        0 = ephemeral port. Use a fixed port when you need NAT port-forwarding.
+                        0 = ephemeral port. Only needed when talking to peers on older plugin versions that
+                        use UDP hole-punching. WebRTC ICE peers do not require a fixed port.
                     </div>
                 </div>
 
@@ -157,6 +172,7 @@
                 document.querySelector('#serverName').value = config.ServerName || '';
                 document.querySelector('#publicJellyfinUrl').value = config.PublicJellyfinUrl || '';
                 document.querySelector('#downloadDirectory').value = config.DownloadDirectory || '';
+                document.querySelector('#stunServer').value = config.StunServer || '';
                 document.querySelector('#overridePublicIp').value = config.OverridePublicIp || '';
                 document.querySelector('#holePunchPort').value = config.HolePunchPort || 0;
                 document.querySelector('#preferQuicForLargeFiles').checked = config.PreferQuicForLargeFiles !== false;
@@ -182,6 +198,7 @@
                 config.ServerName = form.querySelector('#serverName').value.trim();
                 config.PublicJellyfinUrl = form.querySelector('#publicJellyfinUrl').value.trim();
                 config.DownloadDirectory = form.querySelector('#downloadDirectory').value.trim();
+                config.StunServer = form.querySelector('#stunServer').value.trim();
                 config.OverridePublicIp = form.querySelector('#overridePublicIp').value.trim();
 
                 var parsedPort = parseInt(form.querySelector('#holePunchPort').value, 10);

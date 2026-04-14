@@ -15,6 +15,7 @@ public partial class FederationSignalRService : IAsyncDisposable
 {
     private readonly IPluginConfigurationProvider _configProvider;
     private readonly HolePunchService _holePunch;
+    private readonly WebRtcTransportService _webRtc;
     private readonly LibrarySyncService _librarySync;
     private readonly ILogger<FederationSignalRService> _logger;
     private HubConnection? _connection;
@@ -25,11 +26,13 @@ public partial class FederationSignalRService : IAsyncDisposable
     /// </summary>
     public FederationSignalRService(ILogger<FederationSignalRService> logger,
         HolePunchService holePunch,
+        WebRtcTransportService webRtc,
         LibrarySyncService librarySync,
         IPluginConfigurationProvider configProvider)
     {
         _logger = logger;
         _holePunch = holePunch;
+        _webRtc = webRtc;
         _librarySync = librarySync;
         _configProvider = configProvider;
     }
@@ -108,6 +111,59 @@ public partial class FederationSignalRService : IAsyncDisposable
         {
             LogCancellingTransfer(_logger, msg.FileRequestId);
             _holePunch.Cancel(msg.FileRequestId);
+            _webRtc.Cancel(msg.FileRequestId);
+        });
+
+        _connection.On<IceNegotiateStart>("IceNegotiateStart", async msg =>
+        {
+            LogIceNegotiateStart(_logger, msg.FileRequestId, msg.Role.ToString());
+            var cfg = _configProvider.GetConfiguration();
+            try
+            {
+                if (msg.Role == IceRole.Offerer)
+                {
+                    // Sender side: we need the jellyfinItemId — retrieve it from the pending sockets dict
+                    // via HolePunchService (which stored it during PrepareAndSignalReadyAsync).
+                    // Fall back to empty string if not found; BeginAsOffererAsync will log the resolution error.
+                    var jellyfinItemId = _holePunch.GetPendingJellyfinItemId(msg.FileRequestId) ?? string.Empty;
+                    await _webRtc.BeginAsOffererAsync(msg.FileRequestId, jellyfinItemId, _connection!, cfg)
+                        .ConfigureAwait(false);
+                }
+                else
+                {
+                    await _webRtc.BeginAsAnswererAsync(msg.FileRequestId, _connection!, cfg)
+                        .ConfigureAwait(false);
+                }
+            }
+            catch (Exception ex)
+            {
+                LogIceNegotiateStartFailed(_logger, ex, msg.FileRequestId);
+            }
+        });
+
+        _connection.On<IceSignal>("IceSignal", msg =>
+        {
+            LogIceSignalReceived(_logger, msg.FileRequestId, msg.Type.ToString());
+            _webRtc.HandleIceSignal(msg);
+        });
+
+        _connection.On<RelayChunk>("RelayReceiveChunk", msg =>
+        {
+            LogRelayChunkReceived(_logger, msg.FileRequestId, msg.ChunkIndex, msg.IsEof);
+            _webRtc.EnqueueRelayChunk(msg);
+        });
+
+        _connection.On<RelayTransferStart>("RelayTransferStart", async msg =>
+        {
+            LogRelayTransferStartReceived(_logger, msg.FileRequestId);
+            try
+            {
+                await _webRtc.StartRelayReceiveModeAsync(msg, _connection!).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                LogRelayTransferStartFailed(_logger, ex, msg.FileRequestId);
+            }
         });
 
         _connection.Reconnecting += _ =>

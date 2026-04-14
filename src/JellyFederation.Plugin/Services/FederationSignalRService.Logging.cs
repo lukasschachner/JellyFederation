@@ -60,4 +60,25 @@ public partial class FederationSignalRService
 
     [LoggerMessage(11, LogLevel.Information, "Connected to federation server at {Url}")]
     private static partial void LogConnected(ILogger logger, string url);
+
+    [LoggerMessage(13, LogLevel.Information,
+        "IceNegotiateStart received for request {FileRequestId} as {Role}")]
+    private static partial void LogIceNegotiateStart(ILogger logger, Guid fileRequestId, string role);
+
+    [LoggerMessage(14, LogLevel.Error, "IceNegotiateStart handling failed for request {FileRequestId}")]
+    private static partial void LogIceNegotiateStartFailed(ILogger logger, Exception ex, Guid fileRequestId);
+
+    [LoggerMessage(15, LogLevel.Debug, "IceSignal received for request {FileRequestId}: type={Type}")]
+    private static partial void LogIceSignalReceived(ILogger logger, Guid fileRequestId, string type);
+
+    [LoggerMessage(16, LogLevel.Debug,
+        "Relay chunk received for request {FileRequestId}: index={ChunkIndex}, isEof={IsEof}")]
+    private static partial void LogRelayChunkReceived(ILogger logger, Guid fileRequestId, long chunkIndex,
+        bool isEof);
+
+    [LoggerMessage(17, LogLevel.Information, "RelayTransferStart received for request {FileRequestId}")]
+    private static partial void LogRelayTransferStartReceived(ILogger logger, Guid fileRequestId);
+
+    [LoggerMessage(18, LogLevel.Error, "RelayTransferStart handling failed for request {FileRequestId}")]
+    private static partial void LogRelayTransferStartFailed(ILogger logger, Exception ex, Guid fileRequestId);
 }
