@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Net;
 using System.Reflection;
 using System.Text.Json.Serialization;
 using JellyFederation.Server.Data;
