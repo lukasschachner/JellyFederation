@@ -23,14 +23,16 @@ public class PluginConfiguration : BasePluginConfiguration
     public string DownloadDirectory { get; set; } = string.Empty;
 
     /// <summary>
-    ///     Optional: override the public IP this server advertises for hole punching.
-    ///     Useful when running behind NAT or in Docker. Leave empty to auto-detect.
+    ///     Optional hint for backward-compat peers: override the public IP this server advertises for hole punching.
+    ///     Only relevant when communicating with peers running old plugin versions (pre-WebRTC ICE).
+    ///     Leave empty to auto-detect. WebRTC ICE peers handle NAT traversal automatically.
     /// </summary>
     public string OverridePublicIp { get; set; } = string.Empty;
 
     /// <summary>
-    ///     UDP port to bind for hole punching. Set a fixed port when behind NAT/Docker
-    ///     so you can port-forward it. 0 = ephemeral (auto).
+    ///     Optional hint for backward-compat peers: UDP port to bind for hole punching.
+    ///     Only relevant when communicating with peers running old plugin versions (pre-WebRTC ICE).
+    ///     0 = ephemeral (auto). WebRTC ICE peers do not require a fixed port.
     /// </summary>
     public int HolePunchPort { get; set; } = 0;
 
@@ -44,6 +46,12 @@ public class PluginConfiguration : BasePluginConfiguration
     ///     Transfers at or above this size are considered large-file QUIC candidates.
     /// </summary>
     public long LargeFileQuicThresholdBytes { get; set; } = 512L * 1024 * 1024;
+
+    /// <summary>
+    ///     STUN server used for WebRTC ICE candidate gathering.
+    ///     Default is Google's public STUN server. Override for air-gapped deployments.
+    /// </summary>
+    public string StunServer { get; set; } = "stun.l.google.com:19302";
 
     public string TelemetryServiceName { get; set; } = "jellyfederation-plugin";
     public string TelemetryOtlpEndpoint { get; set; } = "http://localhost:4317";

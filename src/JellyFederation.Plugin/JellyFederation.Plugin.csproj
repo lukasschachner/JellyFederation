@@ -29,6 +29,8 @@
         </PackageReference>
         <!-- SignalR client — ship it, but strip its Microsoft.Extensions.* transitive deps below -->
         <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.13"/>
+        <!-- WebRTC DataChannel stack — shipped with the plugin (natives in runtimes/linux-x64/native/) -->
+        <PackageReference Include="SIPSorcery" Version="10.0.3"/>
         <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12"/>
     </ItemGroup>
 

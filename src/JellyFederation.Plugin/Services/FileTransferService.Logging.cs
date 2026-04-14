@@ -112,4 +112,8 @@ public partial class FileTransferService
         string code,
         string category,
         string message);
+
+    [LoggerMessage(27, LogLevel.Information,
+        "DataChannel streaming receive started for request {FileRequestId}")]
+    private static partial void LogStreamingReceiveStarted(ILogger logger, Guid fileRequestId);
 }

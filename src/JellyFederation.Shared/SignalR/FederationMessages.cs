@@ -73,13 +73,15 @@ public record HolePunchReady
         int UdpPort, // The port this plugin bound locally
         string? OverridePublicIp = null, // Optional: override the IP the server uses for this peer
         bool SupportsQuic = false,
-        long LargeFileThresholdBytes = 0)
+        long LargeFileThresholdBytes = 0,
+        bool SupportsIce = false) // NEW: signals WebRTC DataChannel capability
     {
         this.FileRequestId = FileRequestId;
         this.UdpPort = UdpPort;
         this.OverridePublicIp = OverridePublicIp;
         this.SupportsQuic = SupportsQuic;
         this.LargeFileThresholdBytes = LargeFileThresholdBytes;
+        this.SupportsIce = SupportsIce;
     }
 
     public Guid FileRequestId { get; init; }
@@ -88,17 +90,66 @@ public record HolePunchReady
     public bool SupportsQuic { get; init; }
     public long LargeFileThresholdBytes { get; init; }
 
+    /// <summary>
+    ///     When true the plugin supports WebRTC DataChannel (ICE) transfer.
+    ///     Old plugin versions omit this field; the server treats absent as false.
+    /// </summary>
+    public bool SupportsIce { get; init; } = false;
+
     public void Deconstruct(out Guid FileRequestId, out int UdpPort, // The port this plugin bound locally
         out string? OverridePublicIp, // Optional: override the IP the server uses for this peer
-        out bool SupportsQuic, out long LargeFileThresholdBytes)
+        out bool SupportsQuic, out long LargeFileThresholdBytes, out bool SupportsIce)
     {
         FileRequestId = this.FileRequestId;
         UdpPort = this.UdpPort;
         OverridePublicIp = this.OverridePublicIp;
         SupportsQuic = this.SupportsQuic;
         LargeFileThresholdBytes = this.LargeFileThresholdBytes;
+        SupportsIce = this.SupportsIce;
     }
 }
+
+/// <summary>
+///     WebRTC ICE signal type forwarded between peers via the federation server.
+/// </summary>
+public enum IceSignalType
+{
+    Offer,
+    Answer,
+    Candidate
+}
+
+/// <summary>
+///     Role assigned to each peer when ICE negotiation begins.
+/// </summary>
+public enum IceRole
+{
+    Offerer,  // Sender — creates the SDP offer
+    Answerer  // Receiver — creates the SDP answer
+}
+
+/// <summary>
+///     Forwarded between plugins via the federation server to exchange SDP offers,
+///     answers, and trickle ICE candidates.
+/// </summary>
+public record IceSignal(Guid FileRequestId, IceSignalType Type, string Payload);
+
+/// <summary>
+///     Sent by the federation server to each peer once both have advertised
+///     SupportsIce=true. Triggers WebRTC DataChannel negotiation.
+/// </summary>
+public record IceNegotiateStart(Guid FileRequestId, IceRole Role);
+
+/// <summary>
+///     Relay fallback chunk: sent plugin→server→plugin when direct ICE fails.
+///     Max payload 32 KB. IsEof=true signals end of transfer.
+/// </summary>
+public record RelayChunk(Guid FileRequestId, long ChunkIndex, bool IsEof, byte[] Data);
+
+/// <summary>
+///     Notifies the receiver plugin that relay mode has been engaged.
+/// </summary>
+public record RelayTransferStart(Guid FileRequestId, IceRole Role);
 
 /// <summary>
 ///     Sent by a plugin to the federation server to report hole punch outcome.

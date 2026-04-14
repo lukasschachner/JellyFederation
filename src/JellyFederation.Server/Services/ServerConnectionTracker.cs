@@ -22,6 +22,10 @@ public partial class ServerConnectionTracker
     // fileRequestId -> (connectionId, udpPort) for hole punch staging
     private readonly ConcurrentDictionary<Guid, HolePunchCandidate[]> _holePunchStaging = new();
 
+    // fileRequestId -> (senderConnectionId?, receiverConnectionId?) for ICE capability tracking
+    // Populated as each peer calls ReportHolePunchReady with SupportsIce=true.
+    private readonly ConcurrentDictionary<Guid, IceCandidacy[]> _iceCandidacies = new();
+
     private readonly ILogger<ServerConnectionTracker> _logger;
 
     // serverId -> connectionId
@@ -94,6 +98,37 @@ public partial class ServerConnectionTracker
     }
 
     /// <summary>
+    ///     Records that a peer supports ICE for the given file request.
+    ///     Returns true if BOTH peers have now declared SupportsIce=true,
+    ///     and outputs the connection IDs for sender and receiver.
+    /// </summary>
+    public bool TryAddIceCandidacy(
+        Guid fileRequestId,
+        Guid serverId,
+        string connectionId,
+        out IceCandidacy[] candidates)
+    {
+        var entry = new IceCandidacy(serverId, connectionId);
+
+        candidates = _iceCandidacies.AddOrUpdate(
+            fileRequestId,
+            _ => [entry],
+            (_, existing) =>
+            {
+                var others = existing.Where(c => c.ServerId != serverId).ToArray();
+                return [.. others, entry];
+            });
+
+        if (candidates.Select(c => c.ServerId).Distinct().Count() >= 2)
+        {
+            _iceCandidacies.TryRemove(fileRequestId, out _);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
     ///     Records that a peer is ready for hole punching on the given file request.
     ///     Returns true if BOTH peers are now ready (triggers punch).
     /// </summary>
@@ -104,10 +139,11 @@ public partial class ServerConnectionTracker
         int udpPort,
         bool supportsQuic,
         long largeFileThresholdBytes,
-        out HolePunchCandidate[] candidates)
+        out HolePunchCandidate[] candidates,
+        bool supportsIce = false)
     {
         var threshold = largeFileThresholdBytes > 0 ? largeFileThresholdBytes : long.MaxValue;
-        var entry = new HolePunchCandidate(serverId, connectionId, udpPort, supportsQuic, threshold);
+        var entry = new HolePunchCandidate(serverId, connectionId, udpPort, supportsQuic, threshold, supportsIce);
 
         candidates = _holePunchStaging.AddOrUpdate(
             fileRequestId,
@@ -138,13 +174,15 @@ public record HolePunchCandidate
         string ConnectionId,
         int UdpPort,
         bool SupportsQuic,
-        long LargeFileThresholdBytes)
+        long LargeFileThresholdBytes,
+        bool SupportsIce = false)
     {
         this.ServerId = ServerId;
         this.ConnectionId = ConnectionId;
         this.UdpPort = UdpPort;
         this.SupportsQuic = SupportsQuic;
         this.LargeFileThresholdBytes = LargeFileThresholdBytes;
+        this.SupportsIce = SupportsIce;
     }
 
     public Guid ServerId { get; init; }
@@ -152,17 +190,21 @@ public record HolePunchCandidate
     public int UdpPort { get; init; }
     public bool SupportsQuic { get; init; }
     public long LargeFileThresholdBytes { get; init; }
+    public bool SupportsIce { get; init; }
 
     public void Deconstruct(out Guid ServerId, out string ConnectionId, out int UdpPort, out bool SupportsQuic,
-        out long LargeFileThresholdBytes)
+        out long LargeFileThresholdBytes, out bool SupportsIce)
     {
         ServerId = this.ServerId;
         ConnectionId = this.ConnectionId;
         UdpPort = this.UdpPort;
         SupportsQuic = this.SupportsQuic;
         LargeFileThresholdBytes = this.LargeFileThresholdBytes;
+        SupportsIce = this.SupportsIce;
     }
 }
+
+public record IceCandidacy(Guid ServerId, string ConnectionId);
 
 public readonly record struct TransferSelection
 {

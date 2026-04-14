@@ -118,4 +118,45 @@ public partial class FederationHub
         string code,
         string category,
         string message);
+
+    [LoggerMessage(27, LogLevel.Information, "ICE negotiation started for request {RequestId}")]
+    private static partial void LogIceNegotiationStarted(ILogger logger, Guid requestId);
+
+    [LoggerMessage(28, LogLevel.Warning,
+        "ForwardIceSignal: unknown connection {ConnectionId} for request {RequestId}")]
+    private static partial void LogForwardIceSignalUnknownConnection(ILogger logger, string connectionId,
+        Guid requestId);
+
+    [LoggerMessage(29, LogLevel.Warning, "ForwardIceSignal: file request {RequestId} not found — dropping")]
+    private static partial void LogForwardIceSignalNotFound(ILogger logger, Guid requestId);
+
+    [LoggerMessage(30, LogLevel.Warning,
+        "ForwardIceSignal: peer {TargetServerId} offline for request {RequestId} — dropping")]
+    private static partial void LogForwardIceSignalPeerOffline(ILogger logger, Guid requestId, Guid targetServerId);
+
+    [LoggerMessage(31, LogLevel.Debug,
+        "Forwarded ICE signal for request {RequestId}: type={Type} from {SenderId} to {TargetId}")]
+    private static partial void LogForwardedIceSignal(ILogger logger, Guid requestId, string type, Guid senderId,
+        Guid targetId);
+
+    [LoggerMessage(32, LogLevel.Warning,
+        "RelaySendChunk: unknown connection {ConnectionId} for request {RequestId}")]
+    private static partial void LogRelaySendChunkUnknownConnection(ILogger logger, string connectionId,
+        Guid requestId);
+
+    [LoggerMessage(33, LogLevel.Warning, "RelaySendChunk: file request {RequestId} not found — dropping")]
+    private static partial void LogRelaySendChunkNotFound(ILogger logger, Guid requestId);
+
+    [LoggerMessage(34, LogLevel.Warning,
+        "RelaySendChunk: receiver {ReceiverServerId} offline for request {RequestId} — dropping")]
+    private static partial void LogRelaySendChunkReceiverOffline(ILogger logger, Guid requestId,
+        Guid receiverServerId);
+
+    [LoggerMessage(35, LogLevel.Debug,
+        "Relay chunk forwarded for request {RequestId}: index={ChunkIndex}, isEof={IsEof}")]
+    private static partial void LogRelayChunkForwarded(ILogger logger, Guid requestId, long chunkIndex, bool isEof);
+
+    [LoggerMessage(36, LogLevel.Debug,
+        "RelayTransferStart forwarded for request {RequestId} to server {TargetServerId}")]
+    private static partial void LogRelayTransferStartForwarded(ILogger logger, Guid requestId, Guid targetServerId);
 }

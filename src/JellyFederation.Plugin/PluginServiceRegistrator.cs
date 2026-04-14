@@ -23,6 +23,8 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
 
         services.AddHttpClient<LibrarySyncService>();
         services.AddSingleton<HolePunchService>();
+        services.AddSingleton<WebRtcTransportService>();
+        services.AddSingleton<LocalStreamEndpoint>();
         // Use AddHttpClient so the DI container manages HttpClient lifetime via IHttpClientFactory,
         // avoiding socket exhaustion from a long-lived singleton HttpClient.
         services.AddHttpClient<FileTransferService>();
