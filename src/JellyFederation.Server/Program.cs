@@ -107,12 +107,10 @@ builder.Services.AddOpenTelemetry()
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
-    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    // Trust any upstream proxy — the container is not directly internet-exposed (sits behind Traefik)
     options.KnownNetworks.Clear();
     options.KnownProxies.Clear();
-    // Only trust loopback by default
-    options.KnownProxies.Add(IPAddress.Loopback);
-    options.KnownProxies.Add(IPAddress.IPv6Loopback);
 });
 
 builder.Services.AddRateLimiter(options =>
@@ -177,7 +175,7 @@ app.Use(async (context, next) =>
 
     await next().ConfigureAwait(false);
 });
-app.UseHttpsRedirection();
+// HTTPS is terminated by Traefik — no redirect needed inside the container
 app.UseRateLimiter();
 app.UseStaticFiles(); // serve JS/CSS/assets before routing touches the request
 app.UseCors(); // must come before MapControllers / MapHub
