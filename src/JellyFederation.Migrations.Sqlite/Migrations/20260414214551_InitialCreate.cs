@@ -1,9 +1,9 @@
-using System;
+﻿using System;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
-namespace JellyFederation.Migrations.Sqlite
+namespace JellyFederation.Migrations.Sqlite.Migrations
 {
     /// <inheritdoc />
     public partial class InitialCreate : Migration
@@ -15,13 +15,13 @@ namespace JellyFederation.Migrations.Sqlite
                 name: "Servers",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(nullable: false),
-                    Name = table.Column<string>(nullable: false),
-                    OwnerUserId = table.Column<string>(nullable: false),
-                    ApiKey = table.Column<string>(nullable: false),
-                    RegisteredAt = table.Column<DateTime>(nullable: false),
-                    LastSeenAt = table.Column<DateTime>(nullable: false),
-                    IsOnline = table.Column<bool>(nullable: false)
+                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
+                    Name = table.Column<string>(type: "TEXT", nullable: false),
+                    OwnerUserId = table.Column<string>(type: "TEXT", nullable: false),
+                    ApiKey = table.Column<string>(type: "TEXT", nullable: false),
+                    RegisteredAt = table.Column<DateTime>(type: "TEXT", nullable: false),
+                    LastSeenAt = table.Column<DateTime>(type: "TEXT", nullable: false),
+                    IsOnline = table.Column<bool>(type: "INTEGER", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -32,14 +32,20 @@ namespace JellyFederation.Migrations.Sqlite
                 name: "FileRequests",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(nullable: false),
-                    RequestingServerId = table.Column<Guid>(nullable: false),
-                    OwningServerId = table.Column<Guid>(nullable: false),
-                    JellyfinItemId = table.Column<string>(nullable: false),
-                    Status = table.Column<int>(nullable: false),
-                    FailureReason = table.Column<string>(nullable: true),
-                    CreatedAt = table.Column<DateTime>(nullable: false),
-                    CompletedAt = table.Column<DateTime>(nullable: true)
+                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
+                    RequestingServerId = table.Column<Guid>(type: "TEXT", nullable: false),
+                    OwningServerId = table.Column<Guid>(type: "TEXT", nullable: false),
+                    JellyfinItemId = table.Column<string>(type: "TEXT", nullable: false),
+                    Status = table.Column<int>(type: "INTEGER", nullable: false),
+                    SelectedTransportMode = table.Column<int>(type: "INTEGER", nullable: true),
+                    TransportSelectionReason = table.Column<int>(type: "INTEGER", nullable: true),
+                    FailureCategory = table.Column<int>(type: "INTEGER", nullable: true),
+                    FailureReason = table.Column<string>(type: "TEXT", nullable: true),
+                    BytesTransferred = table.Column<long>(type: "INTEGER", nullable: false),
+                    TotalBytes = table.Column<long>(type: "INTEGER", nullable: true),
+                    TransferStartedAt = table.Column<DateTime>(type: "TEXT", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false),
+                    CompletedAt = table.Column<DateTime>(type: "TEXT", nullable: true)
                 },
                 constraints: table =>
                 {
@@ -62,12 +68,12 @@ namespace JellyFederation.Migrations.Sqlite
                 name: "Invitations",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(nullable: false),
-                    FromServerId = table.Column<Guid>(nullable: false),
-                    ToServerId = table.Column<Guid>(nullable: false),
-                    Status = table.Column<int>(nullable: false),
-                    CreatedAt = table.Column<DateTime>(nullable: false),
-                    RespondedAt = table.Column<DateTime>(nullable: true)
+                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
+                    FromServerId = table.Column<Guid>(type: "TEXT", nullable: false),
+                    ToServerId = table.Column<Guid>(type: "TEXT", nullable: false),
+                    Status = table.Column<int>(type: "INTEGER", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "TEXT", nullable: false),
+                    RespondedAt = table.Column<DateTime>(type: "TEXT", nullable: true)
                 },
                 constraints: table =>
                 {
@@ -90,16 +96,17 @@ namespace JellyFederation.Migrations.Sqlite
                 name: "MediaItems",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(nullable: false),
-                    ServerId = table.Column<Guid>(nullable: false),
-                    JellyfinItemId = table.Column<string>(nullable: false),
-                    Title = table.Column<string>(nullable: false),
-                    Type = table.Column<int>(nullable: false),
-                    Year = table.Column<int>(nullable: true),
-                    Overview = table.Column<string>(nullable: true),
-                    ImageUrl = table.Column<string>(nullable: true),
-                    FileSizeBytes = table.Column<long>(nullable: false),
-                    IndexedAt = table.Column<DateTime>(nullable: false)
+                    Id = table.Column<Guid>(type: "TEXT", nullable: false),
+                    ServerId = table.Column<Guid>(type: "TEXT", nullable: false),
+                    JellyfinItemId = table.Column<string>(type: "TEXT", nullable: false),
+                    Title = table.Column<string>(type: "TEXT", nullable: false),
+                    Type = table.Column<int>(type: "INTEGER", nullable: false),
+                    Year = table.Column<int>(type: "INTEGER", nullable: true),
+                    Overview = table.Column<string>(type: "TEXT", nullable: true),
+                    ImageUrl = table.Column<string>(type: "TEXT", nullable: true),
+                    FileSizeBytes = table.Column<long>(type: "INTEGER", nullable: false),
+                    IsRequestable = table.Column<bool>(type: "INTEGER", nullable: false),
+                    IndexedAt = table.Column<DateTime>(type: "TEXT", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -133,9 +140,14 @@ namespace JellyFederation.Migrations.Sqlite
                 column: "ToServerId");
 
             migrationBuilder.CreateIndex(
-                name: "IX_MediaItems_ServerId",
+                name: "IX_MediaItems_ServerId_Title",
                 table: "MediaItems",
-                column: "ServerId");
+                columns: new[] { "ServerId", "Title" });
+
+            migrationBuilder.CreateIndex(
+                name: "IX_MediaItems_ServerId_Type",
+                table: "MediaItems",
+                columns: new[] { "ServerId", "Type" });
 
             migrationBuilder.CreateIndex(
                 name: "IX_Servers_ApiKey",

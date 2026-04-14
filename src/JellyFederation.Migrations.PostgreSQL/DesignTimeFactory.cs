@@ -11,7 +11,7 @@ public class DesignTimeFactory : IDesignTimeDbContextFactory<FederationDbContext
         var connStr = Environment.GetEnvironmentVariable("ConnectionStrings__Default")
                       ?? "Host=localhost;Database=jellyfederation;Username=postgres;Password=postgres";
         var options = new DbContextOptionsBuilder<FederationDbContext>()
-            .UseNpgsql(connStr)
+            .UseNpgsql(connStr, x => x.MigrationsAssembly("JellyFederation.Migrations.PostgreSQL"))
             .Options;
         return new FederationDbContext(options);
     }
