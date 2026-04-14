@@ -9,6 +9,7 @@ using JellyFederation.Shared.Telemetry;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -68,8 +69,13 @@ var connStr = builder.Configuration.GetConnectionString("Default");
 builder.Services.AddDbContext<FederationDbContext>(opt =>
 {
     if (dbProvider.Equals("PostgreSQL", StringComparison.OrdinalIgnoreCase))
+    {
         opt.UseNpgsql(connStr ?? throw new InvalidOperationException(
             "ConnectionStrings:Default is required when Database:Provider is PostgreSQL"));
+        // Migrations were snapshot-built against SQLite; the DDL they generate is correct for
+        // PostgreSQL, but the snapshot column-type comparison fires a false positive warning.
+        opt.ConfigureWarnings(w => w.Ignore(RelationalEventId.PendingModelChangesWarning));
+    }
     else
         opt.UseSqlite(connStr ?? "Data Source=federation.db");
 });
