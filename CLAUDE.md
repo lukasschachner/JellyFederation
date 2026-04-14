@@ -33,4 +33,21 @@ C# (.NET 9/10; `net9.0`, `net10.0`): Follow standard conventions
 - 001-run-speckit-feature: Added C# (.NET 9/10; `net9.0`, `net10.0`) + ASP.NET Core, SignalR, Entity Framework Core (SQLite), Jellyfin plugin APIs, OpenTelemetry .NET SDK
 
 <!-- MANUAL ADDITIONS START -->
+
+## EF Core Migrations
+
+Migrations are split into two provider-specific projects, each with an `IDesignTimeDbContextFactory`:
+- `src/JellyFederation.Migrations.Sqlite/` — SQLite provider
+- `src/JellyFederation.Migrations.PostgreSQL/` — Npgsql/PostgreSQL provider
+
+Adding a migration:
+```bash
+dotnet ef migrations add <Name> --project src/JellyFederation.Migrations.Sqlite
+dotnet ef migrations add <Name> --project src/JellyFederation.Migrations.PostgreSQL
+```
+
+`--startup-project` is **not needed** because both projects implement `IDesignTimeDbContextFactory`, which supplies the connection string and provider registration at design time without the ASP.NET Core host.
+
+At runtime the provider is selected via `Database:Provider` config (`"Sqlite"` or `"PostgreSQL"`). Production sets `Database__Provider=PostgreSQL` and `ConnectionStrings__Default=...` as environment variables.
+
 <!-- MANUAL ADDITIONS END -->
