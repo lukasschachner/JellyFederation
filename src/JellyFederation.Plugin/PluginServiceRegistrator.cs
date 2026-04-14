@@ -3,22 +3,21 @@ using JellyFederation.Plugin.Services;
 using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 
 namespace JellyFederation.Plugin;
 
 /// <summary>
-/// Registers all plugin services with Jellyfin's DI container.
-/// Jellyfin discovers this class automatically via reflection.
+///     Registers all plugin services with Jellyfin's DI container.
+///     Jellyfin discovers this class automatically via reflection.
 /// </summary>
 public class PluginServiceRegistrator : IPluginServiceRegistrator
 {
     public void RegisterServices(IServiceCollection services, IServerApplicationHost applicationHost)
     {
         // Configuration provider — delegates to the plugin singleton but accessed via DI
-        services.AddSingleton<IPluginConfigurationProvider>(
-            _ => FederationPlugin.Instance
-                 ?? throw new InvalidOperationException("FederationPlugin has not been instantiated yet."));
+        services.AddSingleton<IPluginConfigurationProvider>(_ => FederationPlugin.Instance
+                                                                 ?? throw new InvalidOperationException(
+                                                                     "FederationPlugin has not been instantiated yet."));
 
         services.AddLogging();
 

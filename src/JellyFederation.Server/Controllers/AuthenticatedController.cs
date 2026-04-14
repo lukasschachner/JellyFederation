@@ -5,8 +5,8 @@ using Microsoft.AspNetCore.Mvc;
 namespace JellyFederation.Server.Controllers;
 
 /// <summary>
-/// Base controller for endpoints protected by ApiKeyAuthFilter.
-/// Provides access to the authenticated server via CurrentServer.
+///     Base controller for endpoints protected by ApiKeyAuthFilter.
+///     Provides access to the authenticated server via CurrentServer.
 /// </summary>
 public abstract class AuthenticatedController : ControllerBase
 {
@@ -20,9 +20,7 @@ public abstract class AuthenticatedController : ControllerBase
             if (HttpContext.Items.TryGetValue("CorrelationId", out var existing) &&
                 existing is string current &&
                 !string.IsNullOrWhiteSpace(current))
-            {
                 return current;
-            }
 
             var correlationId = FederationTelemetry.CreateCorrelationId();
             HttpContext.Items["CorrelationId"] = correlationId;

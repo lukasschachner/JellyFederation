@@ -1,14 +1,16 @@
+using System.Diagnostics;
+using JellyFederation.Shared.Telemetry;
 using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
-using JellyFederation.Shared.Telemetry;
-using System.Diagnostics;
 
 namespace JellyFederation.Plugin.Services;
 
 public partial class LibrarySyncService
 {
-    private static void TagSpanOutcome(string outcome, Exception? ex = null) =>
+    private static void TagSpanOutcome(string outcome, Exception? ex = null)
+    {
         FederationTelemetry.SetOutcome(Activity.Current, outcome, ex);
+    }
 
     [LoggerMessage(1, LogLevel.Warning, "Library sync skipped: Federation Server URL and API key must be configured.")]
     private static partial void LogSyncSkipped(ILogger logger);
@@ -25,7 +27,8 @@ public partial class LibrarySyncService
     [LoggerMessage(5, LogLevel.Information,
         "Preview sync stats: embedded={Embedded}, fallbackUrl={Fallback}, missing={Missing}, " +
         "budgetUsed={BudgetUsedKb}KB, budgetRemaining={BudgetRemainingKb}KB, chunks={ChunkCount}")]
-    private static partial void LogPreviewSyncStats(ILogger logger, int embedded, int fallback, int missing, int budgetUsedKb, int budgetRemainingKb, int chunkCount);
+    private static partial void LogPreviewSyncStats(ILogger logger, int embedded, int fallback, int missing,
+        int budgetUsedKb, int budgetRemainingKb, int chunkCount);
 
     [LoggerMessage(6, LogLevel.Information,
         "Preview sync stats: embedded=0, fallbackUrl=0, missing={Missing}, budgetUsed=0KB, budgetRemaining={BudgetRemainingKb}KB, chunks=0")]

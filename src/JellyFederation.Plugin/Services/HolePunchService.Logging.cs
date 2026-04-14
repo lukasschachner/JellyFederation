@@ -1,7 +1,7 @@
-using JellyFederation.Shared.SignalR;
-using JellyFederation.Shared.Models;
-using Microsoft.Extensions.Logging;
 using System.Net;
+using JellyFederation.Shared.Models;
+using JellyFederation.Shared.SignalR;
+using Microsoft.Extensions.Logging;
 
 namespace JellyFederation.Plugin.Services;
 
@@ -10,13 +10,15 @@ public partial class HolePunchService
     [LoggerMessage(1, LogLevel.Information, "Reusing existing UDP socket on port {Port} for file request {Id}")]
     private static partial void LogReusingSocket(ILogger logger, int port, Guid id);
 
-    [LoggerMessage(2, LogLevel.Warning, "Configured port {Port} is already in use for request {Id} — falling back to ephemeral port")]
+    [LoggerMessage(2, LogLevel.Warning,
+        "Configured port {Port} is already in use for request {Id} — falling back to ephemeral port")]
     private static partial void LogPortInUse(ILogger logger, Exception ex, int port, Guid id);
 
     [LoggerMessage(3, LogLevel.Information, "Bound UDP socket on port {Port} for file request {Id}")]
     private static partial void LogBoundSocket(ILogger logger, int port, Guid id);
 
-    [LoggerMessage(4, LogLevel.Error, "Failed to bind receiver socket on port {Port} for request {Id} — reporting failure")]
+    [LoggerMessage(4, LogLevel.Error,
+        "Failed to bind receiver socket on port {Port} for request {Id} — reporting failure")]
     private static partial void LogBindFailed(ILogger logger, Exception ex, int port, Guid id);
 
     [LoggerMessage(5, LogLevel.Warning, "Failed to report bind failure for request {Id}")]
@@ -67,4 +69,13 @@ public partial class HolePunchService
 
     [LoggerMessage(16, LogLevel.Error, "Transfer execution failed after hole punch for request {Id}")]
     private static partial void LogTransferExecutionFailed(ILogger logger, Exception ex, Guid id);
+
+    [LoggerMessage(17, LogLevel.Warning,
+        "Hole punch failure descriptor for request {Id}: code={Code}, category={Category}, message={Message}")]
+    private static partial void LogFailureDescriptor(
+        ILogger logger,
+        Guid id,
+        string code,
+        string category,
+        string message);
 }

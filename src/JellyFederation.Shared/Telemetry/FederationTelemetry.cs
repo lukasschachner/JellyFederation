@@ -18,6 +18,8 @@ public static class FederationTelemetry
     public const string TagCorrelationId = "federation.correlation_id";
     public const string TagPeerServerId = "federation.peer_server_id";
     public const string TagOutcome = "federation.outcome";
+    public const string TagFailureCode = "federation.failure_code";
+    public const string TagFailureCategory = "federation.failure_category";
     public const string TagContextSource = "telemetry.context_source";
     public const string TagReleaseVersion = "federation.release_version";
     public const string TagTaxonomyVersion = "federation.taxonomy_version";
@@ -28,12 +30,15 @@ public static class FederationTelemetry
     public const string OutcomeCancelled = "cancelled";
 
     public const string TaxonomyVersion = "v1";
-    public static string CurrentReleaseVersion { get; set; } = "dev";
 
     public static readonly ActivitySource PluginActivitySource = new(ActivitySourcePluginName);
     public static readonly ActivitySource ServerActivitySource = new(ActivitySourceServerName);
+    public static string CurrentReleaseVersion { get; set; } = "dev";
 
-    public static string CreateCorrelationId() => Guid.NewGuid().ToString("N");
+    public static string CreateCorrelationId()
+    {
+        return Guid.NewGuid().ToString("N");
+    }
 
     public static void SetCommonTags(
         Activity? activity,
@@ -68,5 +73,17 @@ public static class FederationTelemetry
             activity.SetTag("error.type", ex.GetType().Name);
             activity.SetTag("error.message", TelemetryRedaction.SanitizeErrorMessage(ex.Message));
         }
+    }
+
+    public static void SetFailure(Activity? activity, Models.FailureDescriptor? failure)
+    {
+        if (activity is null || failure is null)
+            return;
+
+        var sanitized = TelemetryRedaction.SanitizeFailureDescriptor(failure);
+        activity.SetTag(TagFailureCode, sanitized.Code);
+        activity.SetTag(TagFailureCategory, sanitized.Category.ToString());
+        if (!string.IsNullOrWhiteSpace(sanitized.CorrelationId))
+            activity.SetTag(TagCorrelationId, sanitized.CorrelationId);
     }
 }

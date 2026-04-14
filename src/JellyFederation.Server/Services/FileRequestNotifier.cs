@@ -1,31 +1,48 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
 using JellyFederation.Server.Hubs;
 using JellyFederation.Shared.Models;
 using JellyFederation.Shared.SignalR;
 using JellyFederation.Shared.Telemetry;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.Logging;
 
 namespace JellyFederation.Server.Services;
 
 /// <summary>
-/// Centralises the fan-out notification logic for file request status changes
-/// so it is not duplicated between controllers and the hub.
+///     Centralises the fan-out notification logic for file request status changes
+///     so it is not duplicated between controllers and the hub.
 /// </summary>
-public partial class FileRequestNotifier(
-    IHubContext<FederationHub> hub,
-    ServerConnectionTracker tracker,
-    ILogger<FileRequestNotifier> logger)
+public partial class FileRequestNotifier
 {
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, IDisposable> _activeTransfers = new();
+    private readonly ConcurrentDictionary<Guid, IDisposable> _activeTransfers = new();
+    private readonly IHubContext<FederationHub> _hub;
+    private readonly ILogger<FileRequestNotifier> _logger;
+    private readonly SignalRErrorMapper _signalrErrorMapper;
+    private readonly ServerConnectionTracker _tracker;
 
     /// <summary>
-    /// Sends a FileRequestStatusUpdate to both plugin connections and browser groups.
+    ///     Centralises the fan-out notification logic for file request status changes
+    ///     so it is not duplicated between controllers and the hub.
+    /// </summary>
+    public FileRequestNotifier(IHubContext<FederationHub> hub,
+        ServerConnectionTracker tracker,
+        SignalRErrorMapper signalrErrorMapper,
+        ILogger<FileRequestNotifier> logger)
+    {
+        _hub = hub;
+        _tracker = tracker;
+        _signalrErrorMapper = signalrErrorMapper;
+        _logger = logger;
+    }
+
+    /// <summary>
+    ///     Sends a FileRequestStatusUpdate to both plugin connections and browser groups.
     /// </summary>
     public async Task NotifyStatusAsync(FileRequest request)
     {
         using var activity = FederationTelemetry.ServerActivitySource.StartActivity(
             FederationTelemetry.SpanSignalRWorkflow,
-            System.Diagnostics.ActivityKind.Producer);
+            ActivityKind.Producer);
         FederationTelemetry.SetCommonTags(
             activity,
             "file_request.notify_status",
@@ -33,41 +50,45 @@ public partial class FileRequestNotifier(
             request.Id.ToString("N"),
             request.OwningServerId.ToString());
 
-        LogNotifyStatus(logger, request.Id, request.Status, request.OwningServerId, request.RequestingServerId);
+        LogNotifyStatus(_logger, request.Id, request.Status, request.OwningServerId, request.RequestingServerId);
         var update = new FileRequestStatusUpdate(
             request.Id,
             request.Status.ToString(),
             request.FailureReason,
+            SignalRErrorMapper.ToContract(ToFailureDescriptor(request)),
             request.SelectedTransportMode,
             request.FailureCategory,
             request.BytesTransferred,
             request.TotalBytes);
 
-        var senderConn = tracker.GetConnectionId(request.OwningServerId);
-        var receiverConn = tracker.GetConnectionId(request.RequestingServerId);
+        var senderConn = _tracker.GetConnectionId(request.OwningServerId);
+        var receiverConn = _tracker.GetConnectionId(request.RequestingServerId);
 
         if (senderConn is not null)
         {
-            LogNotifyPluginConnection(logger, request.Id, request.OwningServerId, senderConn);
-            await hub.Clients.Client(senderConn).SendAsync("FileRequestStatusUpdate", update);
+            LogNotifyPluginConnection(_logger, request.Id, request.OwningServerId, senderConn);
+            await _hub.Clients.Client(senderConn).SendAsync("FileRequestStatusUpdate", update).ConfigureAwait(false);
         }
         else
         {
-            LogNotifyPluginConnectionMissing(logger, request.Id, request.OwningServerId);
-        }
-        if (receiverConn is not null)
-        {
-            LogNotifyPluginConnection(logger, request.Id, request.RequestingServerId, receiverConn);
-            await hub.Clients.Client(receiverConn).SendAsync("FileRequestStatusUpdate", update);
-        }
-        else
-        {
-            LogNotifyPluginConnectionMissing(logger, request.Id, request.RequestingServerId);
+            LogNotifyPluginConnectionMissing(_logger, request.Id, request.OwningServerId);
         }
 
-        await hub.Clients.Group($"server:{request.OwningServerId}").SendAsync("FileRequestStatusUpdate", update);
-        await hub.Clients.Group($"server:{request.RequestingServerId}").SendAsync("FileRequestStatusUpdate", update);
-        LogNotifyBrowserGroups(logger, request.Id, request.OwningServerId, request.RequestingServerId);
+        if (receiverConn is not null)
+        {
+            LogNotifyPluginConnection(_logger, request.Id, request.RequestingServerId, receiverConn);
+            await _hub.Clients.Client(receiverConn).SendAsync("FileRequestStatusUpdate", update).ConfigureAwait(false);
+        }
+        else
+        {
+            LogNotifyPluginConnectionMissing(_logger, request.Id, request.RequestingServerId);
+        }
+
+        await _hub.Clients.Group($"server:{request.OwningServerId}").SendAsync("FileRequestStatusUpdate", update)
+            .ConfigureAwait(false);
+        await _hub.Clients.Group($"server:{request.RequestingServerId}").SendAsync("FileRequestStatusUpdate", update)
+            .ConfigureAwait(false);
+        LogNotifyBrowserGroups(_logger, request.Id, request.OwningServerId, request.RequestingServerId);
 
         if (request.Status == FileRequestStatus.Transferring)
         {
@@ -75,7 +96,8 @@ public partial class FileRequestNotifier(
             if (!_activeTransfers.TryAdd(request.Id, scope))
                 scope.Dispose();
         }
-        else if (request.Status is FileRequestStatus.Completed or FileRequestStatus.Cancelled or FileRequestStatus.Failed)
+        else if (request.Status is FileRequestStatus.Completed or FileRequestStatus.Cancelled
+                 or FileRequestStatus.Failed)
         {
             if (_activeTransfers.TryRemove(request.Id, out var scope))
                 scope.Dispose();
@@ -83,13 +105,13 @@ public partial class FileRequestNotifier(
     }
 
     /// <summary>
-    /// Sends CancelTransfer to plugin connections and FileRequestStatusUpdate to browser groups.
+    ///     Sends CancelTransfer to plugin connections and FileRequestStatusUpdate to browser groups.
     /// </summary>
     public async Task SendCancelAsync(FileRequest request)
     {
         using var activity = FederationTelemetry.ServerActivitySource.StartActivity(
             FederationTelemetry.SpanSignalRWorkflow,
-            System.Diagnostics.ActivityKind.Producer);
+            ActivityKind.Producer);
         FederationTelemetry.SetCommonTags(
             activity,
             "file_request.cancel_notify",
@@ -97,41 +119,66 @@ public partial class FileRequestNotifier(
             request.Id.ToString("N"),
             request.OwningServerId.ToString());
 
-        LogSendCancel(logger, request.Id, request.OwningServerId, request.RequestingServerId);
+        LogSendCancel(_logger, request.Id, request.OwningServerId, request.RequestingServerId);
         var cancelMsg = new CancelTransfer(request.Id);
         var statusUpdate = new FileRequestStatusUpdate(
             request.Id,
             "Cancelled",
             null,
+            SignalRErrorMapper.ToContract(FailureDescriptor.Cancelled(
+                "request.cancelled",
+                "Request was cancelled.")),
             request.SelectedTransportMode,
             TransferFailureCategory.Cancelled,
             request.BytesTransferred,
             request.TotalBytes);
 
-        var ownerConn = tracker.GetConnectionId(request.OwningServerId);
+        var ownerConn = _tracker.GetConnectionId(request.OwningServerId);
         if (ownerConn is not null)
         {
-            LogCancelPluginConnection(logger, request.Id, request.OwningServerId, ownerConn);
-            await hub.Clients.Client(ownerConn).SendAsync("CancelTransfer", cancelMsg);
+            LogCancelPluginConnection(_logger, request.Id, request.OwningServerId, ownerConn);
+            await _hub.Clients.Client(ownerConn).SendAsync("CancelTransfer", cancelMsg).ConfigureAwait(false);
         }
         else
         {
-            LogCancelPluginConnectionMissing(logger, request.Id, request.OwningServerId);
+            LogCancelPluginConnectionMissing(_logger, request.Id, request.OwningServerId);
         }
 
-        var requesterConn = tracker.GetConnectionId(request.RequestingServerId);
+        var requesterConn = _tracker.GetConnectionId(request.RequestingServerId);
         if (requesterConn is not null)
         {
-            LogCancelPluginConnection(logger, request.Id, request.RequestingServerId, requesterConn);
-            await hub.Clients.Client(requesterConn).SendAsync("CancelTransfer", cancelMsg);
+            LogCancelPluginConnection(_logger, request.Id, request.RequestingServerId, requesterConn);
+            await _hub.Clients.Client(requesterConn).SendAsync("CancelTransfer", cancelMsg).ConfigureAwait(false);
         }
         else
         {
-            LogCancelPluginConnectionMissing(logger, request.Id, request.RequestingServerId);
+            LogCancelPluginConnectionMissing(_logger, request.Id, request.RequestingServerId);
         }
 
-        await hub.Clients.Group($"server:{request.OwningServerId}").SendAsync("FileRequestStatusUpdate", statusUpdate);
-        await hub.Clients.Group($"server:{request.RequestingServerId}").SendAsync("FileRequestStatusUpdate", statusUpdate);
-        LogCancelBrowserGroups(logger, request.Id, request.OwningServerId, request.RequestingServerId);
+        await _hub.Clients.Group($"server:{request.OwningServerId}").SendAsync("FileRequestStatusUpdate", statusUpdate)
+            .ConfigureAwait(false);
+        await _hub.Clients.Group($"server:{request.RequestingServerId}")
+            .SendAsync("FileRequestStatusUpdate", statusUpdate).ConfigureAwait(false);
+        LogCancelBrowserGroups(_logger, request.Id, request.OwningServerId, request.RequestingServerId);
+    }
+
+    private static FailureDescriptor? ToFailureDescriptor(FileRequest request)
+    {
+        if (request.Status is not FileRequestStatus.Failed and not FileRequestStatus.Cancelled)
+            return null;
+
+        var category = request.FailureCategory switch
+        {
+            TransferFailureCategory.Timeout => FailureCategory.Timeout,
+            TransferFailureCategory.Connectivity => FailureCategory.Connectivity,
+            TransferFailureCategory.Reliability => FailureCategory.Reliability,
+            TransferFailureCategory.Cancelled => FailureCategory.Cancelled,
+            _ => FailureCategory.Unexpected
+        };
+
+        return new FailureDescriptor(
+            $"request.{request.Status.ToString().ToLowerInvariant()}",
+            category,
+            request.FailureReason ?? "Request failed.");
     }
 }

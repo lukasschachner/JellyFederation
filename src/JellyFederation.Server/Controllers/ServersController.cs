@@ -1,4 +1,3 @@
-using System.Threading.RateLimiting;
 using JellyFederation.Server.Data;
 using JellyFederation.Server.Filters;
 using JellyFederation.Server.Services;
@@ -7,30 +6,44 @@ using JellyFederation.Shared.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 
 namespace JellyFederation.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
-public partial class ServersController(
-    FederationDbContext db,
-    IConfiguration configuration,
-    ILogger<ServersController> logger) : ControllerBase
+public partial class ServersController : ControllerBase
 {
+    private readonly IConfiguration _configuration;
+    private readonly FederationDbContext _db;
+    private readonly ErrorContractMapper _errorMapper;
+    private readonly ILogger<ServersController> _logger;
+
+    public ServersController(FederationDbContext db,
+        IConfiguration configuration,
+        ErrorContractMapper errorMapper,
+        ILogger<ServersController> logger)
+    {
+        _db = db;
+        _configuration = configuration;
+        _errorMapper = errorMapper;
+        _logger = logger;
+    }
+
     [HttpPost("register")]
     [EnableRateLimiting("register")]
     public async Task<ActionResult<RegisterServerResponse>> Register(RegisterServerRequest request)
     {
-        LogRegisterAttempt(logger, request.Name, request.OwnerUserId);
-        var adminToken = configuration["AdminToken"];
+        LogRegisterAttempt(_logger, request.Name, request.OwnerUserId);
+        var adminToken = _configuration["AdminToken"];
         if (!string.IsNullOrEmpty(adminToken))
         {
             var providedToken = Request.Headers["X-Admin-Token"].FirstOrDefault();
             if (providedToken != adminToken)
             {
-                LogRegisterRejectedAdminToken(logger, request.Name);
-                return Unauthorized("Invalid or missing admin token.");
+                LogRegisterRejectedAdminToken(_logger, request.Name);
+                return ErrorContractMapper.ToActionResult(FailureDescriptor.Authorization(
+                    "server.register.invalid_admin_token",
+                    "Invalid or missing admin token."));
             }
         }
 
@@ -41,9 +54,9 @@ public partial class ServersController(
             ApiKey = ApiKeyService.Generate()
         };
 
-        db.Servers.Add(server);
-        await db.SaveChangesAsync();
-        LogRegisterSucceeded(logger, server.Id, server.Name);
+        _db.Servers.Add(server);
+        await _db.SaveChangesAsync().ConfigureAwait(false);
+        LogRegisterSucceeded(_logger, server.Id, server.Name);
 
         return Ok(new RegisterServerResponse(server.Id, server.ApiKey));
     }
@@ -52,11 +65,11 @@ public partial class ServersController(
     [ServiceFilter(typeof(ApiKeyAuthFilter))]
     public async Task<ActionResult<List<ServerInfoDto>>> List()
     {
-        var servers = await db.Servers
+        var servers = await _db.Servers
             .Select(s => new ServerInfoDto(
                 s.Id, s.Name, s.OwnerUserId, s.IsOnline, s.LastSeenAt, s.MediaItems.Count))
-            .ToListAsync();
-        LogListedServers(logger, servers.Count);
+            .ToListAsync().ConfigureAwait(false);
+        LogListedServers(_logger, servers.Count);
 
         return Ok(servers);
     }
@@ -64,19 +77,21 @@ public partial class ServersController(
     [HttpGet("{id}")]
     public async Task<ActionResult<ServerInfoDto>> Get(Guid id)
     {
-        var server = await db.Servers
+        var server = await _db.Servers
             .Where(s => s.Id == id)
             .Select(s => new ServerInfoDto(
                 s.Id, s.Name, s.OwnerUserId, s.IsOnline, s.LastSeenAt, s.MediaItems.Count))
-            .FirstOrDefaultAsync();
+            .FirstOrDefaultAsync().ConfigureAwait(false);
 
         if (server is null)
         {
-            LogServerNotFound(logger, id);
-            return NotFound();
+            LogServerNotFound(_logger, id);
+            return ErrorContractMapper.ToActionResult(FailureDescriptor.NotFound(
+                "server.not_found",
+                "Server not found."));
         }
 
-        LogServerFetched(logger, id);
+        LogServerFetched(_logger, id);
 
         return Ok(server);
     }

@@ -1,43 +1,60 @@
 using JellyFederation.Server.Data;
 using JellyFederation.Server.Filters;
+using JellyFederation.Server.Services;
 using JellyFederation.Shared.Dtos;
 using JellyFederation.Shared.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
 
 namespace JellyFederation.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
 [ServiceFilter(typeof(ApiKeyAuthFilter))]
-public partial class InvitationsController(
-    FederationDbContext db,
-    ILogger<InvitationsController> logger) : AuthenticatedController
+public partial class InvitationsController : AuthenticatedController
 {
+    private readonly FederationDbContext _db;
+    private readonly ErrorContractMapper _errorMapper;
+    private readonly ILogger<InvitationsController> _logger;
+
+    public InvitationsController(FederationDbContext db,
+        ErrorContractMapper errorMapper,
+        ILogger<InvitationsController> logger)
+    {
+        _db = db;
+        _errorMapper = errorMapper;
+        _logger = logger;
+    }
+
     [HttpPost]
     public async Task<ActionResult<InvitationDto>> Send(
         SendInvitationRequest request)
     {
         var fromServer = CurrentServer;
-        LogInvitationSendRequested(logger, fromServer.Id, request.ToServerId);
+        LogInvitationSendRequested(_logger, fromServer.Id, request.ToServerId);
 
-        var toServer = await db.Servers.FindAsync(request.ToServerId);
+        var toServer = await _db.Servers.FindAsync(request.ToServerId).ConfigureAwait(false);
         if (toServer is null)
         {
-            LogInvitationTargetNotFound(logger, fromServer.Id, request.ToServerId);
-            return NotFound("Target server not found.");
+            LogInvitationTargetNotFound(_logger, fromServer.Id, request.ToServerId);
+            return ErrorContractMapper.ToActionResult(FailureDescriptor.NotFound(
+                "invitation.target_not_found",
+                "Target server not found.",
+                CorrelationId));
         }
 
-        var existingRelationship = await db.Invitations.AnyAsync(i =>
-            (i.FromServerId == fromServer.Id && i.ToServerId == toServer.Id ||
-             i.FromServerId == toServer.Id && i.ToServerId == fromServer.Id) &&
-            (i.Status == InvitationStatus.Pending || i.Status == InvitationStatus.Accepted));
+        var existingRelationship = await _db.Invitations.AnyAsync(i =>
+            ((i.FromServerId == fromServer.Id && i.ToServerId == toServer.Id) ||
+             (i.FromServerId == toServer.Id && i.ToServerId == fromServer.Id)) &&
+            (i.Status == InvitationStatus.Pending || i.Status == InvitationStatus.Accepted)).ConfigureAwait(false);
 
         if (existingRelationship)
         {
-            LogInvitationRelationshipExists(logger, fromServer.Id, toServer.Id);
-            return Conflict("A relationship already exists between these servers");
+            LogInvitationRelationshipExists(_logger, fromServer.Id, toServer.Id);
+            return ErrorContractMapper.ToActionResult(FailureDescriptor.Conflict(
+                "invitation.relationship_exists",
+                "A relationship already exists between these servers.",
+                CorrelationId));
         }
 
         var invitation = new Invitation
@@ -46,9 +63,9 @@ public partial class InvitationsController(
             ToServerId = toServer.Id
         };
 
-        db.Invitations.Add(invitation);
-        await db.SaveChangesAsync();
-        LogInvitationCreated(logger, invitation.Id, invitation.FromServerId, invitation.ToServerId);
+        _db.Invitations.Add(invitation);
+        await _db.SaveChangesAsync().ConfigureAwait(false);
+        LogInvitationCreated(_logger, invitation.Id, invitation.FromServerId, invitation.ToServerId);
 
         return Ok(ToDto(invitation, fromServer.Name, toServer.Name));
     }
@@ -58,12 +75,12 @@ public partial class InvitationsController(
     {
         var server = CurrentServer;
 
-        var invitations = await db.Invitations
+        var invitations = await _db.Invitations
             .Include(i => i.FromServer)
             .Include(i => i.ToServer)
             .Where(i => i.FromServerId == server.Id || i.ToServerId == server.Id)
-            .ToListAsync();
-        LogInvitationListReturned(logger, server.Id, invitations.Count);
+            .ToListAsync().ConfigureAwait(false);
+        LogInvitationListReturned(_logger, server.Id, invitations.Count);
 
         return Ok(invitations.Select(i =>
             ToDto(i, i.FromServer.Name, i.ToServer.Name)));
@@ -76,26 +93,33 @@ public partial class InvitationsController(
     {
         var server = CurrentServer;
 
-        var invitation = await db.Invitations
+        var invitation = await _db.Invitations
             .Include(i => i.FromServer)
             .Include(i => i.ToServer)
-            .FirstOrDefaultAsync(i => i.Id == id && i.ToServerId == server.Id);
+            .FirstOrDefaultAsync(i => i.Id == id && i.ToServerId == server.Id).ConfigureAwait(false);
 
         if (invitation is null)
         {
-            LogInvitationRespondNotFound(logger, id, server.Id);
-            return NotFound();
+            LogInvitationRespondNotFound(_logger, id, server.Id);
+            return ErrorContractMapper.ToActionResult(FailureDescriptor.NotFound(
+                "invitation.not_found",
+                "Invitation not found.",
+                CorrelationId));
         }
+
         if (invitation.Status != InvitationStatus.Pending)
         {
-            LogInvitationRespondNotPending(logger, id, invitation.Status);
-            return Conflict("Invitation is no longer pending.");
+            LogInvitationRespondNotPending(_logger, id, invitation.Status);
+            return ErrorContractMapper.ToActionResult(FailureDescriptor.Conflict(
+                "invitation.not_pending",
+                "Invitation is no longer pending.",
+                CorrelationId));
         }
 
         invitation.Status = request.Accept ? InvitationStatus.Accepted : InvitationStatus.Declined;
         invitation.RespondedAt = DateTime.UtcNow;
-        await db.SaveChangesAsync();
-        LogInvitationResponded(logger, invitation.Id, server.Id, request.Accept);
+        await _db.SaveChangesAsync().ConfigureAwait(false);
+        LogInvitationResponded(_logger, invitation.Id, server.Id, request.Accept);
 
         return Ok(ToDto(invitation, invitation.FromServer.Name, invitation.ToServer.Name));
     }
@@ -105,22 +129,27 @@ public partial class InvitationsController(
     {
         var server = CurrentServer;
 
-        var invitation = await db.Invitations
-            .FirstOrDefaultAsync(i => i.Id == id && i.FromServerId == server.Id);
+        var invitation = await _db.Invitations
+            .FirstOrDefaultAsync(i => i.Id == id && i.FromServerId == server.Id).ConfigureAwait(false);
 
         if (invitation is null)
         {
-            LogInvitationRevokeNotFound(logger, id, server.Id);
-            return NotFound();
+            LogInvitationRevokeNotFound(_logger, id, server.Id);
+            return ErrorContractMapper.ToActionResult(FailureDescriptor.NotFound(
+                "invitation.not_found",
+                "Invitation not found.",
+                CorrelationId));
         }
 
         invitation.Status = InvitationStatus.Revoked;
-        await db.SaveChangesAsync();
-        LogInvitationRevoked(logger, invitation.Id, server.Id);
+        await _db.SaveChangesAsync().ConfigureAwait(false);
+        LogInvitationRevoked(_logger, invitation.Id, server.Id);
 
         return NoContent();
     }
 
-    private static InvitationDto ToDto(Invitation i, string fromName, string toName) =>
-        new(i.Id, i.FromServerId, fromName, i.ToServerId, toName, i.Status, i.CreatedAt);
+    private static InvitationDto ToDto(Invitation i, string fromName, string toName)
+    {
+        return new InvitationDto(i.Id, i.FromServerId, fromName, i.ToServerId, toName, i.Status, i.CreatedAt);
+    }
 }

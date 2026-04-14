@@ -1,38 +1,34 @@
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Net;
+using System.Net.Quic;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
 using JellyFederation.Plugin.Configuration;
-using JellyFederation.Shared.Telemetry;
-using JellyFederation.Shared.SignalR;
 using JellyFederation.Shared.Models;
+using JellyFederation.Shared.SignalR;
+using JellyFederation.Shared.Telemetry;
 using MediaBrowser.Controller.Library;
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Extensions.Logging;
-using System.Net;
-using System.Net.Sockets;
-using System.Text.Json;
-using System.Diagnostics;
-using System.Net.Quic;
-using System.Net.Security;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
 
 namespace JellyFederation.Plugin.Services;
 
 /// <summary>
-/// Transfers files over the UDP-hole-punched socket.
-///
-/// Protocol (simple length-prefixed framing over UDP bursts):
-///   Sender → Receiver:
+///     Transfers files over the UDP-hole-punched socket.
+///     Protocol (simple length-prefixed framing over UDP bursts):
+///     Sender → Receiver:
 ///     1. HEADER frame: JSON { FileName, FileSize }
 ///     2. DATA frames: [4-byte seq][chunk bytes]
 ///     3. EOF frame: magic bytes
-///   Receiver → Sender:
+///     Receiver → Sender:
 ///     ACK frames: [4-byte seq] (selective ACK, retransmit on timeout)
 /// </summary>
-public partial class FileTransferService(
-    ILibraryManager libraryManager,
-    ILibraryMonitor libraryMonitor,
-    HttpClient http,
-    IPluginConfigurationProvider configProvider,
-    ILogger<FileTransferService> logger)
+public partial class FileTransferService
 {
     private const uint HeaderSequence = 0xFFFF_FFFE;
     private const int ChunkSize = 32 * 1024; // 32 KB
@@ -45,8 +41,38 @@ public partial class FileTransferService(
     private static readonly byte[] EofMagic = "JFEOF"u8.ToArray();
 
     // Active transfer cancellation tokens keyed by fileRequestId
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, CancellationTokenSource>
+    private readonly ConcurrentDictionary<Guid, CancellationTokenSource>
         _activeCts = new();
+
+    private readonly IPluginConfigurationProvider _configProvider;
+    private readonly HttpClient _http;
+
+    private readonly ILibraryManager _libraryManager;
+    private readonly ILibraryMonitor _libraryMonitor;
+    private readonly ILogger<FileTransferService> _logger;
+
+    /// <summary>
+    ///     Transfers files over the UDP-hole-punched socket.
+    ///     Protocol (simple length-prefixed framing over UDP bursts):
+    ///     Sender → Receiver:
+    ///     1. HEADER frame: JSON { FileName, FileSize }
+    ///     2. DATA frames: [4-byte seq][chunk bytes]
+    ///     3. EOF frame: magic bytes
+    ///     Receiver → Sender:
+    ///     ACK frames: [4-byte seq] (selective ACK, retransmit on timeout)
+    /// </summary>
+    public FileTransferService(ILibraryManager libraryManager,
+        ILibraryMonitor libraryMonitor,
+        HttpClient http,
+        IPluginConfigurationProvider configProvider,
+        ILogger<FileTransferService> logger)
+    {
+        _libraryManager = libraryManager;
+        _libraryMonitor = libraryMonitor;
+        _http = http;
+        _configProvider = configProvider;
+        _logger = logger;
+    }
 
     public void Cancel(Guid fileRequestId)
     {
@@ -71,32 +97,25 @@ public partial class FileTransferService(
         using var activity = FederationTelemetry.PluginActivitySource.StartActivity(
             FederationTelemetry.SpanFederationOperation,
             ActivityKind.Producer);
-        FederationTelemetry.SetCommonTags(activity, "file.transfer.send", "plugin", correlationId, releaseVersion: FederationPlugin.ReleaseVersion);
-        using var inFlight = FederationMetrics.BeginInflight("file.transfer.send", "plugin", FederationPlugin.ReleaseVersion);
+        FederationTelemetry.SetCommonTags(activity, "file.transfer.send", "plugin", correlationId,
+            releaseVersion: FederationPlugin.ReleaseVersion);
+        using var inFlight =
+            FederationMetrics.BeginInflight("file.transfer.send", "plugin", FederationPlugin.ReleaseVersion);
 
-        if (!Guid.TryParse(jellyfinItemId, out var itemGuid))
+        var fileResolution = ResolveSourceFile(jellyfinItemId, correlationId);
+        if (fileResolution.IsFailure)
         {
-            LogInvalidItemId(logger, jellyfinItemId);
+            var failure = fileResolution.Failure!;
+            LogOperationFailureDescriptor(_logger, fileRequestId, failure.Code, failure.Category.ToString(), failure.Message);
+            FederationTelemetry.SetFailure(activity, failure);
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
+            FederationMetrics.RecordOperation("file.transfer.send", "plugin", FederationTelemetry.OutcomeError,
+                startedAt.Elapsed, FederationPlugin.ReleaseVersion, failure.Category.ToString(), failure.Code);
             return;
         }
 
-        var item = libraryManager.GetItemById(itemGuid);
-        if (item?.Path is null)
-        {
-            LogItemNotFound(logger, jellyfinItemId);
-            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
-            return;
-        }
-
-        var filePath = item.Path;
-        var fileInfo = new FileInfo(filePath);
-        if (!fileInfo.Exists)
-        {
-            LogFileNotFound(logger, filePath);
-            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
-            return;
-        }
+        var fileInfo = fileResolution.RequireValue();
+        var filePath = fileInfo.FullName;
 
         var effectiveMode = selectedMode;
         var effectiveReason = selectionReason;
@@ -107,11 +126,11 @@ public partial class FileTransferService(
             effectiveReason = config.PreferQuicForLargeFiles
                 ? TransferSelectionReason.QuicUnavailableLocal
                 : TransferSelectionReason.QuicUnsupportedPeer;
-            LogQuicFallbackBeforeSend(logger, fileRequestId, effectiveReason);
+            LogQuicFallbackBeforeSend(_logger, fileRequestId, effectiveReason);
         }
 
-        LogSendingFile(logger, fileInfo.Name, fileInfo.Length, remoteEp);
-        LogTransferMode(logger, fileRequestId, effectiveMode, effectiveReason);
+        LogSendingFile(_logger, fileInfo.Name, fileInfo.Length, remoteEp);
+        LogTransferMode(_logger, fileRequestId, effectiveMode, effectiveReason);
 
         using var cts = new CancellationTokenSource();
         _activeCts[fileRequestId] = cts;
@@ -120,13 +139,13 @@ public partial class FileTransferService(
             var ct = cts.Token;
 
             if (effectiveMode == TransferTransportMode.Quic)
-            {
                 try
                 {
-                    await SendWithQuicAsync(fileInfo, remoteEp, ct);
-                    LogFileSent(logger, fileInfo.Name);
+                    await SendWithQuicAsync(fileInfo, remoteEp, ct).ConfigureAwait(false);
+                    LogFileSent(_logger, fileInfo.Name);
                     FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
-                    FederationMetrics.RecordOperation("file.transfer.send.quic", "plugin", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+                    FederationMetrics.RecordOperation("file.transfer.send.quic", "plugin",
+                        FederationTelemetry.OutcomeSuccess, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
                     return;
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -137,11 +156,10 @@ public partial class FileTransferService(
                 {
                     effectiveMode = TransferTransportMode.ArqUdp;
                     effectiveReason = TransferSelectionReason.FallbackAfterError;
-                    LogQuicRuntimeFallback(logger, fileRequestId, ex.Message);
-                    LogTransferMode(logger, fileRequestId, effectiveMode, effectiveReason);
+                    LogQuicRuntimeFallback(_logger, fileRequestId, ex.Message);
+                    LogTransferMode(_logger, fileRequestId, effectiveMode, effectiveReason);
                     FederationMetrics.RecordRetry("file.transfer.send.quic", "plugin", FederationPlugin.ReleaseVersion);
                 }
-            }
 
             // Send header
             var header = JsonSerializer.SerializeToUtf8Bytes(new
@@ -150,32 +168,34 @@ public partial class FileTransferService(
                 FileSize = fileInfo.Length
             });
             var headerFrame = BuildFrame(0xFFFF_FFFE, header);
-            await SendWithAckAsync(socket, remoteEp, headerFrame, 0xFFFF_FFFE, ct);
+            await SendWithAckAsync(socket, remoteEp, headerFrame, 0xFFFF_FFFE, ct).ConfigureAwait(false);
 
             // Send data chunks
-            await using var fs = File.OpenRead(filePath);
+            var fs = File.OpenRead(filePath);
+            await using var fs1 = fs.ConfigureAwait(false);
             var buffer = new byte[ChunkSize];
             uint seq = 0;
             int bytesRead;
 
-            while ((bytesRead = await fs.ReadAsync(buffer, ct)) > 0)
+            while ((bytesRead = await fs.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
             {
                 ct.ThrowIfCancellationRequested();
                 var chunk = buffer[..bytesRead];
                 var frame = BuildFrame(seq, chunk);
-                await SendWithAckAsync(socket, remoteEp, frame, seq, ct);
+                await SendWithAckAsync(socket, remoteEp, frame, seq, ct).ConfigureAwait(false);
                 seq++;
             }
 
             // Send EOF
-            await socket.SendToAsync(EofMagic, SocketFlags.None, remoteEp);
-            LogFileSent(logger, fileInfo.Name);
+            await socket.SendToAsync(EofMagic, SocketFlags.None, remoteEp).ConfigureAwait(false);
+            LogFileSent(_logger, fileInfo.Name);
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
-            FederationMetrics.RecordOperation("file.transfer.send.arq", "plugin", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+            FederationMetrics.RecordOperation("file.transfer.send.arq", "plugin", FederationTelemetry.OutcomeSuccess,
+                startedAt.Elapsed, FederationPlugin.ReleaseVersion);
         }
         catch (OperationCanceledException)
         {
-            LogSendCancelled(logger, fileRequestId);
+            LogSendCancelled(_logger, fileRequestId);
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeCancelled);
         }
         catch (Exception ex)
@@ -184,7 +204,8 @@ public partial class FileTransferService(
             var operation = effectiveMode == TransferTransportMode.Quic
                 ? "file.transfer.send.quic"
                 : "file.transfer.send.arq";
-            FederationMetrics.RecordOperation(operation, "plugin", FederationTelemetry.OutcomeError, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+            FederationMetrics.RecordOperation(operation, "plugin", FederationTelemetry.OutcomeError, startedAt.Elapsed,
+                FederationPlugin.ReleaseVersion);
             throw;
         }
         finally
@@ -208,13 +229,23 @@ public partial class FileTransferService(
         using var activity = FederationTelemetry.PluginActivitySource.StartActivity(
             FederationTelemetry.SpanFederationOperation,
             ActivityKind.Consumer);
-        FederationTelemetry.SetCommonTags(activity, "file.transfer.receive", "plugin", correlationId, releaseVersion: FederationPlugin.ReleaseVersion);
-        using var inFlight = FederationMetrics.BeginInflight("file.transfer.receive", "plugin", FederationPlugin.ReleaseVersion);
+        FederationTelemetry.SetCommonTags(activity, "file.transfer.receive", "plugin", correlationId,
+            releaseVersion: FederationPlugin.ReleaseVersion);
+        using var inFlight =
+            FederationMetrics.BeginInflight("file.transfer.receive", "plugin", FederationPlugin.ReleaseVersion);
 
         if (string.IsNullOrEmpty(config.DownloadDirectory))
         {
-            LogDownloadDirNotConfigured(logger);
+            LogDownloadDirNotConfigured(_logger);
+            var failure = FailureDescriptor.Validation(
+                "transfer.download_directory_missing",
+                "Download directory is not configured.",
+                correlationId);
+            LogOperationFailureDescriptor(_logger, fileRequestId, failure.Code, failure.Category.ToString(), failure.Message);
+            FederationTelemetry.SetFailure(activity, failure);
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
+            FederationMetrics.RecordOperation("file.transfer.receive", "plugin", FederationTelemetry.OutcomeError,
+                startedAt.Elapsed, FederationPlugin.ReleaseVersion, failure.Category.ToString(), failure.Code);
             return;
         }
 
@@ -229,17 +260,17 @@ public partial class FileTransferService(
             effectiveReason = config.PreferQuicForLargeFiles
                 ? TransferSelectionReason.QuicUnavailableLocal
                 : TransferSelectionReason.QuicUnsupportedPeer;
-            LogQuicFallbackBeforeReceive(logger, fileRequestId, effectiveReason);
+            LogQuicFallbackBeforeReceive(_logger, fileRequestId, effectiveReason);
         }
 
-        LogTransferMode(logger, fileRequestId, effectiveMode, effectiveReason);
+        LogTransferMode(_logger, fileRequestId, effectiveMode, effectiveReason);
 
         var recvBuffer = new byte[ChunkSize + 8];
         string? filePath = null;
         FileStream? fs = null;
         uint expectedSeq = 0;
-        bool headerReceived = false;
-        bool receivedEof = false;
+        var headerReceived = false;
+        var receivedEof = false;
         long totalBytes = 0;
         long bytesReceived = 0;
         var lastProgressReport = DateTime.UtcNow;
@@ -250,18 +281,19 @@ public partial class FileTransferService(
         using var timeoutCts = new CancellationTokenSource();
 
         if (effectiveMode == TransferTransportMode.Quic)
-        {
             try
             {
-                await ReceiveWithQuicAsync(fileRequestId, socket, config, connection, transferCts.Token, correlationId);
+                await ReceiveWithQuicAsync(fileRequestId, socket, config, connection, transferCts.Token, correlationId)
+                    .ConfigureAwait(false);
                 _activeCts.TryRemove(fileRequestId, out _);
                 FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
-                FederationMetrics.RecordOperation("file.transfer.receive.quic", "plugin", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+                FederationMetrics.RecordOperation("file.transfer.receive.quic", "plugin",
+                    FederationTelemetry.OutcomeSuccess, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
                 return;
             }
             catch (OperationCanceledException) when (transferCts.IsCancellationRequested)
             {
-                LogReceiveCancelled(logger, fileRequestId);
+                LogReceiveCancelled(_logger, fileRequestId);
                 _activeCts.TryRemove(fileRequestId, out _);
                 FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeCancelled);
                 return;
@@ -270,11 +302,10 @@ public partial class FileTransferService(
             {
                 effectiveMode = TransferTransportMode.ArqUdp;
                 effectiveReason = TransferSelectionReason.FallbackAfterError;
-                LogQuicRuntimeFallback(logger, fileRequestId, ex.Message);
-                LogTransferMode(logger, fileRequestId, effectiveMode, effectiveReason);
+                LogQuicRuntimeFallback(_logger, fileRequestId, ex.Message);
+                LogTransferMode(_logger, fileRequestId, effectiveMode, effectiveReason);
                 FederationMetrics.RecordRetry("file.transfer.receive.quic", "plugin", FederationPlugin.ReleaseVersion);
             }
-        }
 
         try
         {
@@ -287,18 +318,20 @@ public partial class FileTransferService(
                 int received;
                 try
                 {
-                    received = await socket.ReceiveAsync(recvBuffer, SocketFlags.None, linkedCts.Token);
+                    received = await socket.ReceiveAsync(recvBuffer, SocketFlags.None, linkedCts.Token)
+                        .ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (transferCts.IsCancellationRequested)
                 {
-                    LogReceiveCancelled(logger, fileRequestId);
+                    LogReceiveCancelled(_logger, fileRequestId);
                     break;
                 }
                 catch (OperationCanceledException)
                 {
-                    LogReceiveTimeout(logger);
+                    LogReceiveTimeout(_logger);
                     FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeTimeout);
-                    FederationMetrics.RecordTimeout("file.transfer.receive.arq", "plugin", FederationPlugin.ReleaseVersion);
+                    FederationMetrics.RecordTimeout("file.transfer.receive.arq", "plugin",
+                        FederationPlugin.ReleaseVersion);
                     break;
                 }
 
@@ -307,9 +340,10 @@ public partial class FileTransferService(
                 // Check for EOF
                 if (data.Length == EofMagic.Length && data.SequenceEqual(EofMagic))
                 {
-                    LogReceivedEof(logger);
+                    LogReceivedEof(_logger);
                     if (totalBytes > 0)
-                        await ReportProgressAsync(connection, fileRequestId, totalBytes, totalBytes);
+                        await ReportProgressAsync(connection, fileRequestId, totalBytes, totalBytes)
+                            .ConfigureAwait(false);
                     receivedEof = true;
                     break;
                 }
@@ -333,13 +367,15 @@ public partial class FileTransferService(
                         fs = File.Create(filePath);
                         totalBytes = header.FileSize;
                         headerReceived = true;
-                        LogReceivingFile(logger, header.FileName, header.FileSize, filePath);
+                        LogReceivingFile(_logger, header.FileName, header.FileSize, filePath);
                     }
-                    await socket.SendToAsync(BitConverter.GetBytes(HeaderSequence), SocketFlags.None, remoteEp);
+
+                    await socket.SendToAsync(BitConverter.GetBytes(HeaderSequence), SocketFlags.None, remoteEp)
+                        .ConfigureAwait(false);
                 }
                 else if (seq == expectedSeq && fs is not null)
                 {
-                    await fs.WriteAsync(payload);
+                    await fs.WriteAsync(payload).ConfigureAwait(false);
                     bytesReceived += payload.Length;
                     expectedSeq++;
 
@@ -347,20 +383,23 @@ public partial class FileTransferService(
                     if (totalBytes > 0 && (DateTime.UtcNow - lastProgressReport).TotalSeconds >= 1)
                     {
                         lastProgressReport = DateTime.UtcNow;
-                        await ReportProgressAsync(connection, fileRequestId, bytesReceived, totalBytes);
+                        await ReportProgressAsync(connection, fileRequestId, bytesReceived, totalBytes)
+                            .ConfigureAwait(false);
                     }
 
-                    await socket.SendToAsync(BitConverter.GetBytes(seq), SocketFlags.None, remoteEp);
+                    await socket.SendToAsync(BitConverter.GetBytes(seq), SocketFlags.None, remoteEp)
+                        .ConfigureAwait(false);
                 }
                 else if (seq < expectedSeq)
                 {
                     // Duplicate packet; ACK again so sender can move on if prior ACK was lost.
-                    await socket.SendToAsync(BitConverter.GetBytes(seq), SocketFlags.None, remoteEp);
+                    await socket.SendToAsync(BitConverter.GetBytes(seq), SocketFlags.None, remoteEp)
+                        .ConfigureAwait(false);
                 }
                 else
                 {
                     // Out-of-order packet; skip ACK to force sender retransmit of missing sequence.
-                    LogOutOfOrderPacket(logger, seq, expectedSeq);
+                    LogOutOfOrderPacket(_logger, seq, expectedSeq);
                 }
             }
         }
@@ -369,34 +408,32 @@ public partial class FileTransferService(
             _activeCts.TryRemove(fileRequestId, out _);
             if (fs is not null)
             {
-                await fs.FlushAsync();
-                await fs.DisposeAsync();
+                await fs.FlushAsync().ConfigureAwait(false);
+                await fs.DisposeAsync().ConfigureAwait(false);
             }
 
             // Delete partial file if transfer did not complete cleanly
             if (!receivedEof && filePath is not null && File.Exists(filePath))
-            {
                 try
                 {
                     File.Delete(filePath);
-                    LogDeletedIncompleteFile(logger, filePath);
+                    LogDeletedIncompleteFile(_logger, filePath);
                 }
                 catch (Exception ex)
                 {
-                    LogCouldNotDeleteIncompleteFile(logger, ex, filePath);
+                    LogCouldNotDeleteIncompleteFile(_logger, ex, filePath);
                 }
-            }
 
             socket.Dispose();
         }
 
         if (receivedEof && filePath is not null && File.Exists(filePath))
         {
-            LogFileSaved(logger, filePath);
+            LogFileSaved(_logger, filePath);
             TriggerLibraryScan(filePath, config.DownloadDirectory);
 
             // Mark the file request as completed on the federation server
-            var cfg = configProvider.GetConfiguration();
+            var cfg = _configProvider.GetConfiguration();
             var req = new HttpRequestMessage(
                 HttpMethod.Put,
                 $"{cfg.FederationServerUrl.TrimEnd('/')}/api/filerequests/{fileRequestId}/complete");
@@ -405,19 +442,54 @@ public partial class FileTransferService(
             TraceContextPropagation.InjectCorrelationId(req.Headers, correlationId);
             try
             {
-                var resp = await http.SendAsync(req);
+                var resp = await _http.SendAsync(req).ConfigureAwait(false);
                 if (!resp.IsSuccessStatusCode)
-                    LogMarkCompleteFailed(logger, fileRequestId, resp.StatusCode);
+                    LogMarkCompleteFailed(_logger, fileRequestId, resp.StatusCode);
             }
             catch (Exception ex)
             {
-                LogNotifyCompletionFailed(logger, ex, fileRequestId);
+                LogNotifyCompletionFailed(_logger, ex, fileRequestId);
             }
         }
 
         var outcome = receivedEof ? FederationTelemetry.OutcomeSuccess : FederationTelemetry.OutcomeCancelled;
         FederationTelemetry.SetOutcome(activity, outcome);
-        FederationMetrics.RecordOperation("file.transfer.receive.arq", "plugin", outcome, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+        FederationMetrics.RecordOperation("file.transfer.receive.arq", "plugin", outcome, startedAt.Elapsed,
+            FederationPlugin.ReleaseVersion);
+    }
+
+    private OperationOutcome<FileInfo> ResolveSourceFile(string jellyfinItemId, string correlationId)
+    {
+        if (!Guid.TryParse(jellyfinItemId, out var itemGuid))
+        {
+            LogInvalidItemId(_logger, jellyfinItemId);
+            return OperationOutcome<FileInfo>.Fail(FailureDescriptor.Validation(
+                "transfer.item_id_invalid",
+                $"Invalid Jellyfin item ID format: {jellyfinItemId}",
+                correlationId));
+        }
+
+        var item = _libraryManager.GetItemById(itemGuid);
+        if (item?.Path is null)
+        {
+            LogItemNotFound(_logger, jellyfinItemId);
+            return OperationOutcome<FileInfo>.Fail(FailureDescriptor.NotFound(
+                "transfer.item_not_found",
+                $"Item {jellyfinItemId} not found or has no file path.",
+                correlationId));
+        }
+
+        var fileInfo = new FileInfo(item.Path);
+        if (!fileInfo.Exists)
+        {
+            LogFileNotFound(_logger, item.Path);
+            return OperationOutcome<FileInfo>.Fail(FailureDescriptor.NotFound(
+                "transfer.file_not_found",
+                $"File not found: {item.Path}",
+                correlationId));
+        }
+
+        return OperationOutcome<FileInfo>.Success(fileInfo);
     }
 
     private async Task SendWithQuicAsync(
@@ -432,29 +504,29 @@ public partial class FileTransferService(
             DefaultCloseErrorCode = QuicDefaultCloseErrorCode,
             ClientAuthenticationOptions = new SslClientAuthenticationOptions
             {
-                EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls13,
+                EnabledSslProtocols = SslProtocols.Tls13,
                 ApplicationProtocols = [QuicAlpn],
                 RemoteCertificateValidationCallback = (_, _, _, _) => true,
                 TargetHost = "jellyfederation-transfer"
             }
-        }, ct);
+        }, ct).ConfigureAwait(false);
 
         await using (connection.ConfigureAwait(false))
         {
-            var stream = await connection.OpenOutboundStreamAsync(QuicStreamType.Bidirectional, ct);
+            var stream = await connection.OpenOutboundStreamAsync(QuicStreamType.Bidirectional, ct)
+                .ConfigureAwait(false);
             await using (stream.ConfigureAwait(false))
             {
                 var header = JsonSerializer.SerializeToUtf8Bytes(new FileHeader(fileInfo.Name, fileInfo.Length));
-                await WriteInt32Async(stream, header.Length, ct);
-                await stream.WriteAsync(header, ct);
+                await WriteInt32Async(stream, header.Length, ct).ConfigureAwait(false);
+                await stream.WriteAsync(header, ct).ConfigureAwait(false);
 
-                await using var fs = fileInfo.OpenRead();
+                var fs = fileInfo.OpenRead();
+                await using var fs1 = fs.ConfigureAwait(false);
                 var buffer = new byte[ChunkSize];
                 int bytesRead;
-                while ((bytesRead = await fs.ReadAsync(buffer, ct)) > 0)
-                {
-                    await stream.WriteAsync(buffer.AsMemory(0, bytesRead), ct);
-                }
+                while ((bytesRead = await fs.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                    await stream.WriteAsync(buffer.AsMemory(0, bytesRead), ct).ConfigureAwait(false);
 
                 stream.CompleteWrites();
             }
@@ -473,7 +545,7 @@ public partial class FileTransferService(
         holePunchSocket.Dispose();
 
         string? filePath = null;
-        bool completed = false;
+        var completed = false;
         long totalBytes = 0;
         long bytesReceived = 0;
 
@@ -492,87 +564,87 @@ public partial class FileTransferService(
                         DefaultCloseErrorCode = QuicDefaultCloseErrorCode,
                         ServerAuthenticationOptions = new SslServerAuthenticationOptions
                         {
-                            EnabledSslProtocols = System.Security.Authentication.SslProtocols.Tls13,
+                            EnabledSslProtocols = SslProtocols.Tls13,
                             ApplicationProtocols = [QuicAlpn],
                             ServerCertificate = serverCert
                         }
                     };
                     return ValueTask.FromResult(options);
                 }
-            });
+            }).ConfigureAwait(false);
 
             await using (listener.ConfigureAwait(false))
             {
                 using var acceptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                 acceptCts.CancelAfter(QuicAcceptTimeoutMs);
-                var quicConn = await listener.AcceptConnectionAsync(acceptCts.Token);
+                var quicConn = await listener.AcceptConnectionAsync(acceptCts.Token).ConfigureAwait(false);
                 await using (quicConn.ConfigureAwait(false))
                 {
-                    var stream = await quicConn.AcceptInboundStreamAsync(ct);
+                    var stream = await quicConn.AcceptInboundStreamAsync(ct).ConfigureAwait(false);
                     await using (stream.ConfigureAwait(false))
                     {
-                        var headerLength = await ReadInt32Async(stream, ct);
+                        var headerLength = await ReadInt32Async(stream, ct).ConfigureAwait(false);
                         if (headerLength <= 0 || headerLength > 64 * 1024)
                             throw new IOException($"Invalid QUIC header length: {headerLength}");
 
                         var headerBytes = new byte[headerLength];
-                        await ReadExactlyAsync(stream, headerBytes, ct);
+                        await ReadExactlyAsync(stream, headerBytes, ct).ConfigureAwait(false);
                         var header = JsonSerializer.Deserialize<FileHeader>(headerBytes)
-                            ?? throw new IOException("Invalid QUIC file header");
+                                     ?? throw new IOException("Invalid QUIC file header");
 
                         filePath = GetUniqueFilePath(Path.Combine(config.DownloadDirectory, header.FileName));
-                        await using var fs = File.Create(filePath);
+                        var fs = File.Create(filePath);
+                        await using var fs1 = fs.ConfigureAwait(false);
                         totalBytes = header.FileSize;
-                        LogReceivingFile(logger, header.FileName, header.FileSize, filePath);
+                        LogReceivingFile(_logger, header.FileName, header.FileSize, filePath);
 
                         var buffer = new byte[ChunkSize];
                         var lastProgressReport = DateTime.UtcNow;
                         while (true)
                         {
-                            var read = await stream.ReadAsync(buffer, ct);
+                            var read = await stream.ReadAsync(buffer, ct).ConfigureAwait(false);
                             if (read == 0)
                                 break;
 
-                            await fs.WriteAsync(buffer.AsMemory(0, read), ct);
+                            await fs.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
                             bytesReceived += read;
                             if (totalBytes > 0 && (DateTime.UtcNow - lastProgressReport).TotalSeconds >= 1)
                             {
                                 lastProgressReport = DateTime.UtcNow;
-                                await ReportProgressAsync(connection, fileRequestId, bytesReceived, totalBytes);
+                                await ReportProgressAsync(connection, fileRequestId, bytesReceived, totalBytes)
+                                    .ConfigureAwait(false);
                             }
                         }
 
-                        await fs.FlushAsync(ct);
+                        await fs.FlushAsync(ct).ConfigureAwait(false);
                     }
                 }
             }
 
             if (totalBytes > 0)
-                await ReportProgressAsync(connection, fileRequestId, totalBytes, totalBytes);
+                await ReportProgressAsync(connection, fileRequestId, totalBytes, totalBytes).ConfigureAwait(false);
             completed = true;
         }
         finally
         {
             if (!completed && filePath is not null && File.Exists(filePath))
-            {
                 try
                 {
                     File.Delete(filePath);
-                    LogDeletedIncompleteFile(logger, filePath);
+                    LogDeletedIncompleteFile(_logger, filePath);
                 }
                 catch (Exception ex)
                 {
-                    LogCouldNotDeleteIncompleteFile(logger, ex, filePath);
+                    LogCouldNotDeleteIncompleteFile(_logger, ex, filePath);
                 }
-            }
         }
 
         if (completed && filePath is not null && File.Exists(filePath))
         {
-            LogFileSaved(logger, filePath);
+            LogFileSaved(_logger, filePath);
             TriggerLibraryScan(filePath, config.DownloadDirectory);
 
-            var cfg = configProvider.GetConfiguration();
+            var cfg = _configProvider.GetConfiguration();
             var req = new HttpRequestMessage(
                 HttpMethod.Put,
                 $"{cfg.FederationServerUrl.TrimEnd('/')}/api/filerequests/{fileRequestId}/complete");
@@ -581,13 +653,13 @@ public partial class FileTransferService(
             TraceContextPropagation.InjectCorrelationId(req.Headers, correlationId);
             try
             {
-                var resp = await http.SendAsync(req, ct);
+                var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
                 if (!resp.IsSuccessStatusCode)
-                    LogMarkCompleteFailed(logger, fileRequestId, resp.StatusCode);
+                    LogMarkCompleteFailed(_logger, fileRequestId, resp.StatusCode);
             }
             catch (Exception ex)
             {
-                LogNotifyCompletionFailed(logger, ex, fileRequestId);
+                LogNotifyCompletionFailed(_logger, ex, fileRequestId);
             }
         }
     }
@@ -612,13 +684,13 @@ public partial class FileTransferService(
     {
         Span<byte> bytes = stackalloc byte[4];
         BitConverter.TryWriteBytes(bytes, value);
-        await stream.WriteAsync(bytes.ToArray(), ct);
+        await stream.WriteAsync(bytes.ToArray(), ct).ConfigureAwait(false);
     }
 
     private static async Task<int> ReadInt32Async(Stream stream, CancellationToken ct)
     {
         var bytes = new byte[4];
-        await ReadExactlyAsync(stream, bytes, ct);
+        await ReadExactlyAsync(stream, bytes, ct).ConfigureAwait(false);
         return BitConverter.ToInt32(bytes, 0);
     }
 
@@ -627,7 +699,8 @@ public partial class FileTransferService(
         var offset = 0;
         while (offset < buffer.Length)
         {
-            var read = await stream.ReadAsync(buffer.AsMemory(offset, buffer.Length - offset), ct);
+            var read = await stream.ReadAsync(buffer.AsMemory(offset, buffer.Length - offset), ct)
+                .ConfigureAwait(false);
             if (read == 0)
                 throw new EndOfStreamException("Unexpected end of stream");
             offset += read;
@@ -635,7 +708,7 @@ public partial class FileTransferService(
     }
 
     /// <summary>
-    /// Returns a unique file path by appending _1, _2, … if the file already exists.
+    ///     Returns a unique file path by appending _1, _2, … if the file already exists.
     /// </summary>
     private static string GetUniqueFilePath(string path)
     {
@@ -646,7 +719,7 @@ public partial class FileTransferService(
         var nameWithoutExt = Path.GetFileNameWithoutExtension(path);
         var ext = Path.GetExtension(path);
 
-        for (int i = 1; ; i++)
+        for (var i = 1;; i++)
         {
             var candidate = Path.Combine(dir, $"{nameWithoutExt}_{i}{ext}");
             if (!File.Exists(candidate))
@@ -659,21 +732,21 @@ public partial class FileTransferService(
         // Check if the download directory is within any configured Jellyfin library.
         // If yes: a targeted ReportFileSystemChanged is enough.
         // If no: fall back to a full ValidateMediaLibrary and warn the user.
-        var virtualFolders = libraryManager.GetVirtualFolders();
-        bool isWatched = virtualFolders.Any(vf =>
+        var virtualFolders = _libraryManager.GetVirtualFolders();
+        var isWatched = virtualFolders.Any(vf =>
             vf.Locations.Any(loc =>
                 downloadDirectory.StartsWith(loc, StringComparison.OrdinalIgnoreCase) ||
                 loc.StartsWith(downloadDirectory, StringComparison.OrdinalIgnoreCase)));
 
         if (isWatched)
         {
-            libraryMonitor.ReportFileSystemChanged(filePath);
-            LogTriggeredLibraryScan(logger, filePath);
+            _libraryMonitor.ReportFileSystemChanged(filePath);
+            LogTriggeredLibraryScan(_logger, filePath);
         }
         else
         {
-            LogDownloadDirNotInLibrary(logger, downloadDirectory);
-            _ = Task.Run(() => libraryManager.ValidateMediaLibrary(
+            LogDownloadDirNotInLibrary(_logger, downloadDirectory);
+            _ = Task.Run(() => _libraryManager.ValidateMediaLibrary(
                 new Progress<double>(), CancellationToken.None));
         }
     }
@@ -684,11 +757,11 @@ public partial class FileTransferService(
         try
         {
             await connection.SendAsync("ReportTransferProgress",
-                new TransferProgress(fileRequestId, bytesReceived, totalBytes));
+                new TransferProgress(fileRequestId, bytesReceived, totalBytes)).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            LogReportProgressFailed(logger, ex, fileRequestId);
+            LogReportProgressFailed(_logger, ex, fileRequestId);
         }
     }
 
@@ -705,10 +778,10 @@ public partial class FileTransferService(
         CancellationToken ct = default)
     {
         var ackBuffer = new byte[4];
-        for (int attempt = 0; attempt < MaxRetries; attempt++)
+        for (var attempt = 0; attempt < MaxRetries; attempt++)
         {
             ct.ThrowIfCancellationRequested();
-            await socket.SendToAsync(frame, SocketFlags.None, remoteEp);
+            await socket.SendToAsync(frame, SocketFlags.None, remoteEp).ConfigureAwait(false);
 
             // Use a single linked CTS; avoid the hidden inner CTS leak from
             // CreateLinkedTokenSource(ct, new CancellationTokenSource(timeout).Token)
@@ -716,7 +789,7 @@ public partial class FileTransferService(
             ackCts.CancelAfter(AckTimeoutMs);
             try
             {
-                await socket.ReceiveAsync(ackBuffer, SocketFlags.None, ackCts.Token);
+                await socket.ReceiveAsync(ackBuffer, SocketFlags.None, ackCts.Token).ConfigureAwait(false);
                 if (BitConverter.ToUInt32(ackBuffer, 0) == seq)
                     return;
             }
@@ -726,7 +799,7 @@ public partial class FileTransferService(
             }
             catch (OperationCanceledException)
             {
-                LogAckTimeout(logger, seq, attempt + 1, MaxRetries);
+                LogAckTimeout(_logger, seq, attempt + 1, MaxRetries);
                 FederationMetrics.RecordRetry("file.transfer.send", "plugin", FederationPlugin.ReleaseVersion);
             }
         }
@@ -734,5 +807,21 @@ public partial class FileTransferService(
         throw new IOException($"Failed to get ACK for seq {seq} after {MaxRetries} attempts");
     }
 
-    private record FileHeader(string FileName, long FileSize);
+    private record FileHeader
+    {
+        public FileHeader(string FileName, long FileSize)
+        {
+            this.FileName = FileName;
+            this.FileSize = FileSize;
+        }
+
+        public string FileName { get; init; }
+        public long FileSize { get; init; }
+
+        public void Deconstruct(out string FileName, out long FileSize)
+        {
+            FileName = this.FileName;
+            FileSize = this.FileSize;
+        }
+    }
 }

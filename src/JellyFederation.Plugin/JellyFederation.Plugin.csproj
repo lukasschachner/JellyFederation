@@ -1,54 +1,54 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-  </PropertyGroup>
+    <PropertyGroup>
+        <TargetFramework>net9.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    </PropertyGroup>
 
-  <ItemGroup>
-    <!-- Compile-time only — Jellyfin's runtime provides these DLLs -->
-    <PackageReference Include="Jellyfin.Controller" Version="10.11.8">
-      <PrivateAssets>all</PrivateAssets>
-      <ExcludeAssets>runtime</ExcludeAssets>
-      <IncludeAssets>compile; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-    </PackageReference>
-    <PackageReference Include="Jellyfin.Data" Version="10.11.8">
-      <PrivateAssets>all</PrivateAssets>
-      <ExcludeAssets>runtime</ExcludeAssets>
-      <IncludeAssets>compile; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-    </PackageReference>
-    <PackageReference Include="Jellyfin.Model" Version="10.11.8">
-      <PrivateAssets>all</PrivateAssets>
-      <ExcludeAssets>runtime</ExcludeAssets>
-      <IncludeAssets>compile; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-    </PackageReference>
-    <!-- SignalR client — ship it, but strip its Microsoft.Extensions.* transitive deps below -->
-    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.13" />
-    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="..\JellyFederation.Shared\JellyFederation.Shared.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <EmbeddedResource Include="Web\configurationpage.html" />
-  </ItemGroup>
-
-  <!--
-    Remove Microsoft.Extensions.* DLLs from the publish output.
-    Jellyfin already ships these in its AppDomain; duplicating them causes
-    assembly binding conflicts and the plugin gets marked NotSupported.
-  -->
-  <Target Name="StripJellyfinProvidedDlls" AfterTargets="Publish">
     <ItemGroup>
-      <_ToDelete Include="$(PublishDir)Microsoft.Extensions.*.dll" />
-      <_ToDelete Include="$(PublishDir)Microsoft.Extensions.DependencyInjection.dll" />
+        <!-- Compile-time only — Jellyfin's runtime provides these DLLs -->
+        <PackageReference Include="Jellyfin.Controller" Version="10.11.8">
+            <PrivateAssets>all</PrivateAssets>
+            <ExcludeAssets>runtime</ExcludeAssets>
+            <IncludeAssets>compile; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+        <PackageReference Include="Jellyfin.Data" Version="10.11.8">
+            <PrivateAssets>all</PrivateAssets>
+            <ExcludeAssets>runtime</ExcludeAssets>
+            <IncludeAssets>compile; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+        <PackageReference Include="Jellyfin.Model" Version="10.11.8">
+            <PrivateAssets>all</PrivateAssets>
+            <ExcludeAssets>runtime</ExcludeAssets>
+            <IncludeAssets>compile; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+        </PackageReference>
+        <!-- SignalR client — ship it, but strip its Microsoft.Extensions.* transitive deps below -->
+        <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.13"/>
+        <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12"/>
     </ItemGroup>
-    <Delete Files="@(_ToDelete)" />
-    <Message Text="Stripped Jellyfin-provided Microsoft.Extensions DLLs from publish output." Importance="high" />
-  </Target>
+
+    <ItemGroup>
+        <ProjectReference Include="..\JellyFederation.Shared\JellyFederation.Shared.csproj"/>
+    </ItemGroup>
+
+    <ItemGroup>
+        <EmbeddedResource Include="Web\configurationpage.html"/>
+    </ItemGroup>
+
+    <!--
+      Remove Microsoft.Extensions.* DLLs from the publish output.
+      Jellyfin already ships these in its AppDomain; duplicating them causes
+      assembly binding conflicts and the plugin gets marked NotSupported.
+    -->
+    <Target Name="StripJellyfinProvidedDlls" AfterTargets="Publish">
+        <ItemGroup>
+            <_ToDelete Include="$(PublishDir)Microsoft.Extensions.*.dll"/>
+            <_ToDelete Include="$(PublishDir)Microsoft.Extensions.DependencyInjection.dll"/>
+        </ItemGroup>
+        <Delete Files="@(_ToDelete)"/>
+        <Message Text="Stripped Jellyfin-provided Microsoft.Extensions DLLs from publish output." Importance="high"/>
+    </Target>
 
 </Project>

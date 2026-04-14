@@ -1,9 +1,9 @@
+using System.Reflection;
 using JellyFederation.Plugin.Configuration;
 using MediaBrowser.Common.Configuration;
 using MediaBrowser.Common.Plugins;
 using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Serialization;
-using System.Reflection;
 
 namespace JellyFederation.Plugin;
 
@@ -19,22 +19,29 @@ public class FederationPlugin : BasePlugin<PluginConfiguration>, IHasWebPages, I
     }
 
     public static FederationPlugin? Instance { get; private set; }
+
     public static string ReleaseVersion { get; } =
         Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "dev";
-
-    /// <inheritdoc />
-    PluginConfiguration IPluginConfigurationProvider.GetConfiguration() => Configuration;
 
     public override string Name => PluginName;
     public override Guid Id => PluginGuid;
     public override string Description => "Federation media sharing between Jellyfin servers";
 
-    public IEnumerable<PluginPageInfo> GetPages() =>
-    [
-        new PluginPageInfo
-        {
-            Name = Name,
-            EmbeddedResourcePath = $"{GetType().Namespace}.Web.configurationpage.html"
-        }
-    ];
+    public IEnumerable<PluginPageInfo> GetPages()
+    {
+        return
+        [
+            new PluginPageInfo
+            {
+                Name = Name,
+                EmbeddedResourcePath = $"{GetType().Namespace}.Web.configurationpage.html"
+            }
+        ];
+    }
+
+    /// <inheritdoc />
+    PluginConfiguration IPluginConfigurationProvider.GetConfiguration()
+    {
+        return Configuration;
+    }
 }

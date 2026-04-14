@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Logging;
-
 namespace JellyFederation.Server.Controllers;
 
 public partial class ServersController

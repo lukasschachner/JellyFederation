@@ -98,6 +98,22 @@ Server-side mode selection is deterministic per request:
 3. During incidents, pivot from high timeout/error series to traces with matching `correlation_id`.
 4. Use `federation.outcome`, `error.type`, and sanitized `error.message` tags to identify the failing stage quickly.
 
+## Result-based workflow outcomes
+
+- Core plugin/server workflows now use `OperationOutcome<T>` + `FailureDescriptor` for expected failures.
+- Boundary translation happens through:
+  - `ErrorContractMapper` (HTTP API)
+  - `SignalRErrorMapper` (SignalR payloads)
+- External error payloads include stable `code`, `category`, and sanitized `message` fields.
+
+## Contributor guidance: outcome/error conventions
+
+1. Prefer returning `OperationOutcome<T>` for expected failures (validation, not-found, conflict, connectivity).
+2. Use stable failure codes (for example: `file_request.invalid_state`) and safe messages.
+3. Keep raw exception details in logs/telemetry, not in client-facing contracts.
+4. At boundaries, map `FailureDescriptor` with mapper services instead of ad-hoc `NotFound("...")`/`Conflict("...")`.
+5. Use shared composition helpers (`Map`, `Bind`, `Match`, async variants) to avoid repetitive branching.
+
 ## License
 
 See `LICENSE`.

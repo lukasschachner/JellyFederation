@@ -1,33 +1,30 @@
-using Jellyfin.Data.Enums;
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Net.Http.Json;
+using System.Reflection;
 using JellyFederation.Plugin.Configuration;
 using JellyFederation.Shared.Dtos;
+using JellyFederation.Shared.Models;
 using JellyFederation.Shared.Telemetry;
+using Jellyfin.Data.Enums;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.Movies;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Library;
-using MediaBrowser.Model.Querying;
 using MediaBrowser.Model.Entities;
 using Microsoft.Extensions.Logging;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.Formats.Jpeg;
 using SixLabors.ImageSharp.Processing;
-using System.Collections.Concurrent;
-using System.Net.Http.Json;
-using System.Reflection;
 using MediaType = JellyFederation.Shared.Models.MediaType;
-using System.Diagnostics;
 
 namespace JellyFederation.Plugin.Services;
 
 /// <summary>
-/// Pushes the local Jellyfin library metadata to the federation server.
-/// Called on startup and whenever a library change is detected.
+///     Pushes the local Jellyfin library metadata to the federation server.
+///     Called on startup and whenever a library change is detected.
 /// </summary>
-public partial class LibrarySyncService(
-    ILibraryManager libraryManager,
-    HttpClient http,
-    ILogger<LibrarySyncService> logger)
+public partial class LibrarySyncService
 {
     private const int MaxEmbeddedPreviewBytesPerImage = 450 * 1024;
     private const int MaxEmbeddedPreviewBytesPerSync = 80 * 1024 * 1024;
@@ -37,56 +34,61 @@ public partial class LibrarySyncService(
 
     // Cache PropertyInfo lookups per type to avoid repeated reflection on large libraries
     private static readonly ConcurrentDictionary<(Type, string), PropertyInfo?> PropertyCache = new();
+    private readonly HttpClient _http;
+    private readonly ILibraryManager _libraryManager;
+    private readonly ILogger<LibrarySyncService> _logger;
     private readonly SemaphoreSlim _syncGate = new(1, 1);
-    private int _pendingSync;
     private bool _missingConfigurationWarningLogged;
+    private int _pendingSync;
 
-    public async Task SyncAsync(PluginConfiguration config, CancellationToken ct = default)
+    /// <summary>
+    ///     Pushes the local Jellyfin library metadata to the federation server.
+    ///     Called on startup and whenever a library change is detected.
+    /// </summary>
+    public LibrarySyncService(ILibraryManager libraryManager,
+        HttpClient http,
+        ILogger<LibrarySyncService> logger)
+    {
+        _libraryManager = libraryManager;
+        _http = http;
+        _logger = logger;
+    }
+
+    public async Task<OperationOutcome<bool>> SyncAsync(PluginConfiguration config, CancellationToken ct = default)
     {
         if (string.IsNullOrEmpty(config.FederationServerUrl) ||
             string.IsNullOrEmpty(config.ApiKey))
         {
             if (!_missingConfigurationWarningLogged)
             {
-                LogSyncSkipped(logger);
+                LogSyncSkipped(_logger);
                 _missingConfigurationWarningLogged = true;
             }
-            return;
+
+            return OperationOutcome<bool>.Fail(FailureDescriptor.Validation(
+                "library.sync.missing_configuration",
+                "Federation Server URL and API key must be configured."));
         }
 
         _missingConfigurationWarningLogged = false;
         Interlocked.Exchange(ref _pendingSync, 1);
 
-        if (!await _syncGate.WaitAsync(0, ct))
+        if (!await _syncGate.WaitAsync(0, ct).ConfigureAwait(false))
         {
-            LogSyncAlreadyInProgress(logger);
-            return;
+            LogSyncAlreadyInProgress(_logger);
+            return OperationOutcome<bool>.Success(false);
         }
 
         try
         {
             while (Interlocked.Exchange(ref _pendingSync, 0) == 1)
             {
-                try
-                {
-                    await RunSyncOnceAsync(config, ct);
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    FederationMetrics.RecordOperation(
-                        "library.sync",
-                        "plugin",
-                        FederationTelemetry.OutcomeError,
-                        TimeSpan.Zero,
-                        FederationPlugin.ReleaseVersion);
-                    throw new InvalidOperationException(
-                        $"Library sync failed: {TelemetryRedaction.SanitizeErrorMessage(ex.Message)}", ex);
-                }
+                var runOutcome = await RunSyncOnceAsync(config, ct).ConfigureAwait(false);
+                if (runOutcome.IsFailure)
+                    return OperationOutcome<bool>.Fail(runOutcome.Failure!);
             }
+
+            return OperationOutcome<bool>.Success(true);
         }
         finally
         {
@@ -94,7 +96,7 @@ public partial class LibrarySyncService(
         }
     }
 
-    private async Task RunSyncOnceAsync(PluginConfiguration config, CancellationToken ct)
+    private async Task<OperationOutcome<bool>> RunSyncOnceAsync(PluginConfiguration config, CancellationToken ct)
     {
         var startedAt = Stopwatch.StartNew();
         var correlationId = FederationTelemetry.CreateCorrelationId();
@@ -109,53 +111,85 @@ public partial class LibrarySyncService(
             releaseVersion: FederationPlugin.ReleaseVersion);
         using var inFlight = FederationMetrics.BeginInflight("library.sync", "plugin", FederationPlugin.ReleaseVersion);
 
-        LogStartingSync(logger);
-
-        var items = libraryManager.GetItemList(new InternalItemsQuery
+        try
         {
-            Recursive = true,
-            IncludeItemTypes = [BaseItemKind.Movie, BaseItemKind.Series, BaseItemKind.Episode, BaseItemKind.Audio]
-        }).ToList();
+            LogStartingSync(_logger);
 
-        var baseEntries = BuildBaseEntries(items);
-        await PostSyncRequest(baseEntries, replaceAll: true, config, ct, correlationId);
-        LogSyncedItems(logger, baseEntries.Count);
+            var items = _libraryManager.GetItemList(new InternalItemsQuery
+            {
+                Recursive = true,
+                IncludeItemTypes = [BaseItemKind.Movie, BaseItemKind.Series, BaseItemKind.Episode, BaseItemKind.Audio]
+            }).ToList();
 
-        var previewPayload = BuildSyncPayload(items, config, MaxEmbeddedPreviewBytesPerSync);
-        var previewEntries = previewPayload.Entries
-            .Where(x => !string.IsNullOrWhiteSpace(x.ImageUrl))
-            .ToList();
+            var baseEntries = BuildBaseEntries(items);
+            await PostSyncRequest(baseEntries, true, config, ct, correlationId).ConfigureAwait(false);
+            LogSyncedItems(_logger, baseEntries.Count);
 
-        if (previewEntries.Count > 0)
-        {
-            var chunks = ChunkPreviewEntries(previewEntries);
-            foreach (var chunk in chunks)
-                await PostSyncRequest(chunk, replaceAll: false, config, ct, correlationId);
+            var previewPayload = BuildSyncPayload(items, config, MaxEmbeddedPreviewBytesPerSync);
+            var previewEntries = previewPayload.Entries
+                .Where(x => !string.IsNullOrWhiteSpace(x.ImageUrl))
+                .ToList();
 
-            LogPreviewSyncStats(logger,
-                previewPayload.EmbeddedCount, previewPayload.FallbackUrlCount, previewPayload.MissingImageCount,
-                previewPayload.BudgetUsed / 1024, previewPayload.BudgetRemaining / 1024, chunks.Count);
+            if (previewEntries.Count > 0)
+            {
+                var chunks = ChunkPreviewEntries(previewEntries);
+                foreach (var chunk in chunks)
+                    await PostSyncRequest(chunk, false, config, ct, correlationId).ConfigureAwait(false);
+
+                LogPreviewSyncStats(_logger,
+                    previewPayload.EmbeddedCount, previewPayload.FallbackUrlCount, previewPayload.MissingImageCount,
+                    previewPayload.BudgetUsed / 1024, previewPayload.BudgetRemaining / 1024, chunks.Count);
+            }
+            else
+            {
+                LogPreviewSyncStatsEmpty(_logger, previewPayload.MissingImageCount, MaxEmbeddedPreviewBytesPerSync / 1024);
+            }
+
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
+            FederationMetrics.RecordOperation("library.sync", "plugin", FederationTelemetry.OutcomeSuccess,
+                startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+            return OperationOutcome<bool>.Success(true);
         }
-        else
+        catch (OperationCanceledException)
         {
-            LogPreviewSyncStatsEmpty(logger, previewPayload.MissingImageCount, MaxEmbeddedPreviewBytesPerSync / 1024);
+            throw;
         }
-
-        FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
-        FederationMetrics.RecordOperation("library.sync", "plugin", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed, FederationPlugin.ReleaseVersion);
+        catch (Exception ex)
+        {
+            var failure = FailureDescriptor.Unexpected(
+                "library.sync.failed",
+                $"Library sync failed: {TelemetryRedaction.SanitizeErrorMessage(ex.Message)}",
+                correlationId);
+            FederationTelemetry.SetFailure(activity, failure);
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError, ex);
+            FederationMetrics.RecordOperation(
+                "library.sync",
+                "plugin",
+                FederationTelemetry.OutcomeError,
+                startedAt.Elapsed,
+                FederationPlugin.ReleaseVersion,
+                failure.Category.ToString(),
+                failure.Code);
+            return OperationOutcome<bool>.Fail(failure);
+        }
     }
 
-    private static bool IsAudioItem(BaseItem item) =>
-        item.GetType().Name == "Audio";
-
-    private static MediaType MapType(BaseItem item) => item switch
+    private static bool IsAudioItem(BaseItem item)
     {
-        Movie => MediaType.Movie,
-        Series => MediaType.Series,
-        Episode => MediaType.Episode,
-        _ when IsAudioItem(item) => MediaType.Music,
-        _ => MediaType.Other
-    };
+        return item.GetType().Name == "Audio";
+    }
+
+    private static MediaType MapType(BaseItem item)
+    {
+        return item switch
+        {
+            Movie => MediaType.Movie,
+            Series => MediaType.Series,
+            Episode => MediaType.Episode,
+            _ when IsAudioItem(item) => MediaType.Music,
+            _ => MediaType.Other
+        };
+    }
 
     private long GetFileSize(string path)
     {
@@ -179,12 +213,12 @@ public partial class LibrarySyncService(
         }
         catch (IOException ex)
         {
-            LogFileSizeFailed(logger, ex, path);
+            LogFileSizeFailed(_logger, ex, path);
             return 0;
         }
         catch (UnauthorizedAccessException ex)
         {
-            LogFileSizeAccessDenied(logger, ex, path);
+            LogFileSizeAccessDenied(_logger, ex, path);
             return 0;
         }
     }
@@ -219,7 +253,7 @@ public partial class LibrarySyncService(
         }
         catch (Exception ex)
         {
-            LogEmbedPreviewFailed(logger, ex, item.Id);
+            LogEmbedPreviewFailed(_logger, ex, item.Id);
             return null;
         }
     }
@@ -241,13 +275,13 @@ public partial class LibrarySyncService(
                 else if (imageUrl is not null) fallbackUrlCount++;
                 else missingImageCount++;
                 return new MediaItemSyncEntry(
-                    JellyfinItemId: i.Id.ToString(),
-                    Title: i.Name,
-                    Type: MapType(i),
-                    Year: i.ProductionYear,
-                    Overview: i.Overview,
-                    ImageUrl: imageUrl,
-                    FileSizeBytes: i.Path is not null ? GetFileSize(i.Path) : 0);
+                    i.Id.ToString(),
+                    i.Name,
+                    MapType(i),
+                    i.ProductionYear,
+                    i.Overview,
+                    imageUrl,
+                    i.Path is not null ? GetFileSize(i.Path) : 0);
             })
             .ToList();
 
@@ -256,21 +290,21 @@ public partial class LibrarySyncService(
             embeddedCount,
             fallbackUrlCount,
             missingImageCount,
-            BudgetRemaining: remainingPreviewBudget,
-            BudgetUsed: previewBudget - remainingPreviewBudget);
+            remainingPreviewBudget,
+            previewBudget - remainingPreviewBudget);
     }
 
     private List<MediaItemSyncEntry> BuildBaseEntries(IReadOnlyList<BaseItem> items)
     {
         return items
             .Select(i => new MediaItemSyncEntry(
-                JellyfinItemId: i.Id.ToString(),
-                Title: i.Name,
-                Type: MapType(i),
-                Year: i.ProductionYear,
-                Overview: i.Overview,
-                ImageUrl: null,
-                FileSizeBytes: i.Path is not null ? GetFileSize(i.Path) : 0))
+                i.Id.ToString(),
+                i.Name,
+                MapType(i),
+                i.ProductionYear,
+                i.Overview,
+                null,
+                i.Path is not null ? GetFileSize(i.Path) : 0))
             .ToList();
     }
 
@@ -300,18 +334,19 @@ public partial class LibrarySyncService(
         return chunks;
     }
 
-    private async Task PostSyncRequest(List<MediaItemSyncEntry> entries, bool replaceAll, PluginConfiguration config, CancellationToken ct, string correlationId)
+    private async Task PostSyncRequest(List<MediaItemSyncEntry> entries, bool replaceAll, PluginConfiguration config,
+        CancellationToken ct, string correlationId)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post,
             $"{config.FederationServerUrl.TrimEnd('/')}/api/library/sync")
         {
-            Content = JsonContent.Create(new SyncMediaRequest(entries, ReplaceAll: replaceAll))
+            Content = JsonContent.Create(new SyncMediaRequest(entries, replaceAll))
         };
         request.Headers.Add("X-Api-Key", config.ApiKey);
         TraceContextPropagation.InjectToHttpRequest(request);
         TraceContextPropagation.InjectCorrelationId(request.Headers, correlationId);
 
-        using var response = await http.SendAsync(request, ct);
+        using var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
     }
 
@@ -339,14 +374,17 @@ public partial class LibrarySyncService(
         return null;
     }
 
-    private static int GetPreviewPriority(BaseItem item) => item switch
+    private static int GetPreviewPriority(BaseItem item)
     {
-        Movie => 0,
-        Series => 1,
-        Episode => 2,
-        _ when IsAudioItem(item) => 3,
-        _ => 4
-    };
+        return item switch
+        {
+            Movie => 0,
+            Series => 1,
+            Episode => 2,
+            _ when IsAudioItem(item) => 3,
+            _ => 4
+        };
+    }
 
     private string? ResolvePrimaryImagePath(BaseItem item)
     {
@@ -389,9 +427,7 @@ public partial class LibrarySyncService(
             if (property?.PropertyType == typeof(string) &&
                 property.GetValue(item) is string directPath &&
                 !string.IsNullOrWhiteSpace(directPath))
-            {
                 return directPath;
-            }
         }
 
         if (string.IsNullOrWhiteSpace(item.Path))
@@ -431,7 +467,6 @@ public partial class LibrarySyncService(
         };
 
         foreach (var imageType in preferredTypes)
-        {
             try
             {
                 var directPath = item.GetImagePath(imageType, 0);
@@ -439,17 +474,14 @@ public partial class LibrarySyncService(
                     return directPath;
 
                 foreach (var imageInfo in item.GetImages(imageType))
-                {
                     if (!string.IsNullOrWhiteSpace(imageInfo.Path) && File.Exists(imageInfo.Path))
                         return imageInfo.Path;
-                }
             }
             catch (Exception ex)
             {
                 // Some item types may not expose all image slots; log unexpected failures at debug level.
-                LogReadImageSlotFailed(logger, ex, imageType, item.Id);
+                LogReadImageSlotFailed(_logger, ex, imageType, item.Id);
             }
-        }
 
         return null;
     }
@@ -457,20 +489,43 @@ public partial class LibrarySyncService(
     private static IEnumerable<string> BuildPosterCandidates(string directory)
     {
         foreach (var name in new[] { "poster", "folder", "cover" })
-        {
-            foreach (var ext in new[] { ".jpg", ".jpeg", ".png", ".webp" })
-            {
-                yield return Path.Combine(directory, name + ext);
-            }
-        }
+        foreach (var ext in new[] { ".jpg", ".jpeg", ".png", ".webp" })
+            yield return Path.Combine(directory, name + ext);
     }
 
-    private sealed record SyncPayload(
-        List<MediaItemSyncEntry> Entries,
-        int EmbeddedCount,
-        int FallbackUrlCount,
-        int MissingImageCount,
-        int BudgetRemaining,
-        int BudgetUsed);
+    private sealed record SyncPayload
+    {
+        public SyncPayload(List<MediaItemSyncEntry> Entries,
+            int EmbeddedCount,
+            int FallbackUrlCount,
+            int MissingImageCount,
+            int BudgetRemaining,
+            int BudgetUsed)
+        {
+            this.Entries = Entries;
+            this.EmbeddedCount = EmbeddedCount;
+            this.FallbackUrlCount = FallbackUrlCount;
+            this.MissingImageCount = MissingImageCount;
+            this.BudgetRemaining = BudgetRemaining;
+            this.BudgetUsed = BudgetUsed;
+        }
 
+        public List<MediaItemSyncEntry> Entries { get; }
+        public int EmbeddedCount { get; }
+        public int FallbackUrlCount { get; }
+        public int MissingImageCount { get; }
+        public int BudgetRemaining { get; }
+        public int BudgetUsed { get; }
+
+        public void Deconstruct(out List<MediaItemSyncEntry> Entries, out int EmbeddedCount, out int FallbackUrlCount,
+            out int MissingImageCount, out int BudgetRemaining, out int BudgetUsed)
+        {
+            Entries = this.Entries;
+            EmbeddedCount = this.EmbeddedCount;
+            FallbackUrlCount = this.FallbackUrlCount;
+            MissingImageCount = this.MissingImageCount;
+            BudgetRemaining = this.BudgetRemaining;
+            BudgetUsed = this.BudgetUsed;
+        }
+    }
 }

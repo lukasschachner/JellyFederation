@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using JellyFederation.Server.Data;
 using JellyFederation.Server.Filters;
 using JellyFederation.Server.Hubs;
@@ -9,21 +10,36 @@ using JellyFederation.Shared.Telemetry;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging;
-using System.Diagnostics;
 
 namespace JellyFederation.Server.Controllers;
 
 [ApiController]
 [Route("api/[controller]")]
 [ServiceFilter(typeof(ApiKeyAuthFilter))]
-public partial class FileRequestsController(
-    FederationDbContext db,
-    ServerConnectionTracker tracker,
-    IHubContext<FederationHub> hub,
-    FileRequestNotifier notifier,
-    ILogger<FileRequestsController> logger) : AuthenticatedController
+public partial class FileRequestsController : AuthenticatedController
 {
+    private readonly FederationDbContext _db;
+    private readonly ErrorContractMapper _errorMapper;
+    private readonly IHubContext<FederationHub> _hub;
+    private readonly ILogger<FileRequestsController> _logger;
+    private readonly FileRequestNotifier _notifier;
+    private readonly ServerConnectionTracker _tracker;
+
+    public FileRequestsController(FederationDbContext db,
+        ServerConnectionTracker tracker,
+        IHubContext<FederationHub> hub,
+        FileRequestNotifier notifier,
+        ErrorContractMapper errorMapper,
+        ILogger<FileRequestsController> logger)
+    {
+        _db = db;
+        _tracker = tracker;
+        _hub = hub;
+        _notifier = notifier;
+        _errorMapper = errorMapper;
+        _logger = logger;
+    }
+
     [HttpPost]
     public async Task<ActionResult<FileRequestDto>> Create(
         CreateFileRequestDto request)
@@ -32,33 +48,42 @@ public partial class FileRequestsController(
         using var activity = FederationTelemetry.ServerActivitySource.StartActivity(
             FederationTelemetry.SpanFederationOperation,
             ActivityKind.Server);
-        FederationTelemetry.SetCommonTags(activity, "file_request.create", "server", CorrelationId, request.OwningServerId.ToString());
+        FederationTelemetry.SetCommonTags(activity, "file_request.create", "server", CorrelationId,
+            request.OwningServerId.ToString());
         using var inFlight = FederationMetrics.BeginInflight("file_request.create", "server");
 
         var requestingServer = CurrentServer;
-        LogCreateRequested(logger, requestingServer.Id, request.OwningServerId, request.JellyfinItemId);
+        LogCreateRequested(_logger, requestingServer.Id, request.OwningServerId, request.JellyfinItemId);
 
-        var owningServer = await db.Servers.FindAsync(request.OwningServerId);
+        var owningServer = await _db.Servers.FindAsync(request.OwningServerId).ConfigureAwait(false);
         if (owningServer is null)
         {
-            LogCreateOwningServerNotFound(logger, request.OwningServerId, requestingServer.Id);
+            LogCreateOwningServerNotFound(_logger, request.OwningServerId, requestingServer.Id);
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
-            FederationMetrics.RecordOperation("file_request.create", "server", FederationTelemetry.OutcomeError, startedAt.Elapsed);
-            return NotFound("Owning server not found.");
+            FederationMetrics.RecordOperation("file_request.create", "server", FederationTelemetry.OutcomeError,
+                startedAt.Elapsed);
+            return ErrorContractMapper.ToActionResult(FailureDescriptor.NotFound(
+                "file_request.owning_server_not_found",
+                "Owning server not found.",
+                CorrelationId));
         }
 
         // Verify an accepted invitation exists between these two servers
-        var invited = await db.Invitations.AnyAsync(i =>
+        var invited = await _db.Invitations.AnyAsync(i =>
             i.Status == InvitationStatus.Accepted &&
             ((i.FromServerId == requestingServer.Id && i.ToServerId == owningServer.Id) ||
-             (i.FromServerId == owningServer.Id && i.ToServerId == requestingServer.Id)));
+             (i.FromServerId == owningServer.Id && i.ToServerId == requestingServer.Id))).ConfigureAwait(false);
 
         if (!invited)
         {
-            LogCreateForbiddenNoInvitation(logger, requestingServer.Id, owningServer.Id);
+            LogCreateForbiddenNoInvitation(_logger, requestingServer.Id, owningServer.Id);
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
-            FederationMetrics.RecordOperation("file_request.create", "server", FederationTelemetry.OutcomeError, startedAt.Elapsed);
-            return Forbid();
+            FederationMetrics.RecordOperation("file_request.create", "server", FederationTelemetry.OutcomeError,
+                startedAt.Elapsed);
+            return ErrorContractMapper.ToActionResult(FailureDescriptor.Authorization(
+                "file_request.invitation_required",
+                "An accepted invitation is required between both servers.",
+                CorrelationId));
         }
 
         var fileRequest = new FileRequest
@@ -68,40 +93,35 @@ public partial class FileRequestsController(
             JellyfinItemId = request.JellyfinItemId
         };
 
-        db.FileRequests.Add(fileRequest);
-        await db.SaveChangesAsync();
-        LogCreated(logger, fileRequest.Id, fileRequest.RequestingServerId, fileRequest.OwningServerId);
+        _db.FileRequests.Add(fileRequest);
+        await _db.SaveChangesAsync().ConfigureAwait(false);
+        LogCreated(_logger, fileRequest.Id, fileRequest.RequestingServerId, fileRequest.OwningServerId);
 
         // Notify both plugins so each can bind a UDP socket and signal ready for hole punching
-        var ownerConn = tracker.GetConnectionId(owningServer.Id);
+        var ownerConn = _tracker.GetConnectionId(owningServer.Id);
         if (ownerConn is not null)
-        {
-            await hub.Clients.Client(ownerConn).SendAsync(
-                "FileRequestNotification",
-                new FileRequestNotification(fileRequest.Id, request.JellyfinItemId, requestingServer.Id, IsSender: true));
-        }
+            await _hub.Clients.Client(ownerConn).SendAsync(
+                    "FileRequestNotification",
+                    new FileRequestNotification(fileRequest.Id, request.JellyfinItemId, requestingServer.Id, true))
+                .ConfigureAwait(false);
         else
-        {
-            LogCreateOwnerPluginOffline(logger, fileRequest.Id, owningServer.Id);
-        }
+            LogCreateOwnerPluginOffline(_logger, fileRequest.Id, owningServer.Id);
 
-        var requesterConn = tracker.GetConnectionId(requestingServer.Id);
+        var requesterConn = _tracker.GetConnectionId(requestingServer.Id);
         if (requesterConn is not null)
-        {
-            await hub.Clients.Client(requesterConn).SendAsync(
-                "FileRequestNotification",
-                new FileRequestNotification(fileRequest.Id, request.JellyfinItemId, requestingServer.Id, IsSender: false));
-        }
+            await _hub.Clients.Client(requesterConn).SendAsync(
+                    "FileRequestNotification",
+                    new FileRequestNotification(fileRequest.Id, request.JellyfinItemId, requestingServer.Id, false))
+                .ConfigureAwait(false);
         else
-        {
-            LogCreateRequesterPluginOffline(logger, fileRequest.Id, requestingServer.Id);
-        }
+            LogCreateRequesterPluginOffline(_logger, fileRequest.Id, requestingServer.Id);
 
         // Both server objects are already in memory — no extra DB round-trips needed
         fileRequest.RequestingServer = requestingServer;
         fileRequest.OwningServer = owningServer;
         FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
-        FederationMetrics.RecordOperation("file_request.create", "server", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed);
+        FederationMetrics.RecordOperation("file_request.create", "server", FederationTelemetry.OutcomeSuccess,
+            startedAt.Elapsed);
         return Ok(ToDto(fileRequest));
     }
 
@@ -110,20 +130,20 @@ public partial class FileRequestsController(
     {
         var server = CurrentServer;
 
-        var requests = await db.FileRequests
+        var requests = await _db.FileRequests
             .Include(r => r.RequestingServer)
             .Include(r => r.OwningServer)
             .Where(r => r.RequestingServerId == server.Id || r.OwningServerId == server.Id)
             .OrderByDescending(r => r.CreatedAt)
-            .ToListAsync();
+            .ToListAsync().ConfigureAwait(false);
 
         // Batch-load item titles from the media items table
         var itemIds = requests.Select(r => r.JellyfinItemId).Distinct().ToList();
-        var titles = await db.MediaItems
+        var titles = await _db.MediaItems
             .Where(m => itemIds.Contains(m.JellyfinItemId))
             .Select(m => new { m.JellyfinItemId, m.Title })
-            .ToDictionaryAsync(m => m.JellyfinItemId, m => m.Title);
-        LogListReturned(logger, server.Id, requests.Count);
+            .ToDictionaryAsync(m => m.JellyfinItemId, m => m.Title).ConfigureAwait(false);
+        LogListReturned(_logger, server.Id, requests.Count);
 
         return Ok(requests.Select(r => ToDto(r, titles.GetValueOrDefault(r.JellyfinItemId))));
     }
@@ -135,46 +155,60 @@ public partial class FileRequestsController(
         using var activity = FederationTelemetry.ServerActivitySource.StartActivity(
             FederationTelemetry.SpanFederationOperation,
             ActivityKind.Server);
-        FederationTelemetry.SetCommonTags(activity, "file_request.cancel", "server", CorrelationId, releaseVersion: "server");
+        FederationTelemetry.SetCommonTags(activity, "file_request.cancel", "server", CorrelationId,
+            releaseVersion: "server");
 
         var server = CurrentServer;
 
-        var request = await db.FileRequests.FindAsync(id);
+        var request = await _db.FileRequests.FindAsync(id).ConfigureAwait(false);
         if (request is null)
         {
-            LogCancelNotFound(logger, id, server.Id);
+            LogCancelNotFound(_logger, id, server.Id);
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
-            FederationMetrics.RecordOperation("file_request.cancel", "server", FederationTelemetry.OutcomeError, startedAt.Elapsed);
-            return NotFound();
+            FederationMetrics.RecordOperation("file_request.cancel", "server", FederationTelemetry.OutcomeError,
+                startedAt.Elapsed);
+            return ErrorContractMapper.ToActionResult(FailureDescriptor.NotFound(
+                "file_request.not_found",
+                "File request not found.",
+                CorrelationId));
         }
 
         // Either party can cancel
         if (request.RequestingServerId != server.Id && request.OwningServerId != server.Id)
         {
-            LogCancelForbidden(logger, id, server.Id, request.RequestingServerId, request.OwningServerId);
+            LogCancelForbidden(_logger, id, server.Id, request.RequestingServerId, request.OwningServerId);
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
-            FederationMetrics.RecordOperation("file_request.cancel", "server", FederationTelemetry.OutcomeError, startedAt.Elapsed);
-            return Forbid();
+            FederationMetrics.RecordOperation("file_request.cancel", "server", FederationTelemetry.OutcomeError,
+                startedAt.Elapsed);
+            return ErrorContractMapper.ToActionResult(FailureDescriptor.Authorization(
+                "file_request.cancel_forbidden",
+                "Only participating servers can cancel this request.",
+                CorrelationId));
         }
 
         // Can only cancel non-terminal requests
         if (request.Status is FileRequestStatus.Completed or FileRequestStatus.Cancelled)
         {
-            LogCancelRejectedTerminal(logger, id, request.Status);
+            LogCancelRejectedTerminal(_logger, id, request.Status);
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
-            FederationMetrics.RecordOperation("file_request.cancel", "server", FederationTelemetry.OutcomeError, startedAt.Elapsed);
-            return BadRequest("Request is already in a terminal state.");
+            FederationMetrics.RecordOperation("file_request.cancel", "server", FederationTelemetry.OutcomeError,
+                startedAt.Elapsed);
+            return ErrorContractMapper.ToActionResult(FailureDescriptor.Conflict(
+                "file_request.already_terminal",
+                "Request is already in a terminal state.",
+                CorrelationId));
         }
 
         request.Status = FileRequestStatus.Cancelled;
         request.FailureCategory = TransferFailureCategory.Cancelled;
         request.FailureReason = null;
-        await db.SaveChangesAsync();
+        await _db.SaveChangesAsync().ConfigureAwait(false);
 
-        await notifier.SendCancelAsync(request);
-        LogCancelled(logger, id, server.Id);
+        await _notifier.SendCancelAsync(request).ConfigureAwait(false);
+        LogCancelled(_logger, id, server.Id);
         FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
-        FederationMetrics.RecordOperation("file_request.cancel", "server", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed);
+        FederationMetrics.RecordOperation("file_request.cancel", "server", FederationTelemetry.OutcomeSuccess,
+            startedAt.Elapsed);
 
         return NoContent();
     }
@@ -186,51 +220,67 @@ public partial class FileRequestsController(
         using var activity = FederationTelemetry.ServerActivitySource.StartActivity(
             FederationTelemetry.SpanFederationOperation,
             ActivityKind.Server);
-        FederationTelemetry.SetCommonTags(activity, "file_request.complete", "server", CorrelationId, releaseVersion: "server");
+        FederationTelemetry.SetCommonTags(activity, "file_request.complete", "server", CorrelationId,
+            releaseVersion: "server");
 
         var server = CurrentServer;
 
-        var request = await db.FileRequests.FindAsync(id);
+        var request = await _db.FileRequests.FindAsync(id).ConfigureAwait(false);
         if (request is null)
         {
-            LogMarkCompleteNotFound(logger, id, server.Id);
+            LogMarkCompleteNotFound(_logger, id, server.Id);
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
-            FederationMetrics.RecordOperation("file_request.complete", "server", FederationTelemetry.OutcomeError, startedAt.Elapsed);
-            return NotFound();
+            FederationMetrics.RecordOperation("file_request.complete", "server", FederationTelemetry.OutcomeError,
+                startedAt.Elapsed);
+            return ErrorContractMapper.ToActionResult(FailureDescriptor.NotFound(
+                "file_request.not_found",
+                "File request not found.",
+                CorrelationId));
         }
+
         // Only the receiver (requesting server) may mark a transfer as completed
         if (request.RequestingServerId != server.Id)
         {
-            LogMarkCompleteForbidden(logger, id, server.Id, request.RequestingServerId);
+            LogMarkCompleteForbidden(_logger, id, server.Id, request.RequestingServerId);
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
-            FederationMetrics.RecordOperation("file_request.complete", "server", FederationTelemetry.OutcomeError, startedAt.Elapsed);
-            return Forbid();
+            FederationMetrics.RecordOperation("file_request.complete", "server", FederationTelemetry.OutcomeError,
+                startedAt.Elapsed);
+            return ErrorContractMapper.ToActionResult(FailureDescriptor.Authorization(
+                "file_request.complete_forbidden",
+                "Only the requesting server can mark transfer completion.",
+                CorrelationId));
         }
 
         if (request.Status != FileRequestStatus.Transferring)
         {
-            LogMarkCompleteConflict(logger, id, request.Status);
+            LogMarkCompleteConflict(_logger, id, request.Status);
             FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
-            FederationMetrics.RecordOperation("file_request.complete", "server", FederationTelemetry.OutcomeError, startedAt.Elapsed);
-            return Conflict("Request is not in progress");
+            FederationMetrics.RecordOperation("file_request.complete", "server", FederationTelemetry.OutcomeError,
+                startedAt.Elapsed);
+            return ErrorContractMapper.ToActionResult(FailureDescriptor.Conflict(
+                "file_request.invalid_state",
+                "Request is not in progress.",
+                CorrelationId));
         }
 
         request.Status = FileRequestStatus.Completed;
         request.CompletedAt = DateTime.UtcNow;
         request.FailureCategory = null;
         request.FailureReason = null;
-        await db.SaveChangesAsync();
+        await _db.SaveChangesAsync().ConfigureAwait(false);
 
-        await notifier.NotifyStatusAsync(request);
-        LogMarkedComplete(logger, id, server.Id);
+        await _notifier.NotifyStatusAsync(request).ConfigureAwait(false);
+        LogMarkedComplete(_logger, id, server.Id);
         FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
-        FederationMetrics.RecordOperation("file_request.complete", "server", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed);
+        FederationMetrics.RecordOperation("file_request.complete", "server", FederationTelemetry.OutcomeSuccess,
+            startedAt.Elapsed);
 
         return NoContent();
     }
 
-    private static FileRequestDto ToDto(FileRequest r, string? itemTitle = null) =>
-        new(r.Id,
+    private static FileRequestDto ToDto(FileRequest r, string? itemTitle = null)
+    {
+        return new FileRequestDto(r.Id,
             r.RequestingServerId, r.RequestingServer.Name,
             r.OwningServerId, r.OwningServer.Name,
             r.JellyfinItemId, itemTitle,
@@ -240,5 +290,19 @@ public partial class FileRequestsController(
             r.BytesTransferred,
             r.TotalBytes,
             r.FailureReason,
+            r.FailureReason is null
+                ? null
+                : ErrorContractMapper.ToContract(new FailureDescriptor(
+                    $"request.{(r.FailureCategory ?? TransferFailureCategory.Unknown).ToString().ToLowerInvariant()}",
+                    r.FailureCategory switch
+                    {
+                        TransferFailureCategory.Timeout => FailureCategory.Timeout,
+                        TransferFailureCategory.Connectivity => FailureCategory.Connectivity,
+                        TransferFailureCategory.Reliability => FailureCategory.Reliability,
+                        TransferFailureCategory.Cancelled => FailureCategory.Cancelled,
+                        _ => FailureCategory.Unexpected
+                    },
+                    r.FailureReason)),
             r.CreatedAt);
+    }
 }
