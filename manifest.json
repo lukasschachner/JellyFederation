@@ -8,6 +8,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "1.1.0",
+        "changelog": "## What's Changed\r\n* feat(webrtc): add ICE transfer and relay fallback by @lukasschachner in https://github.com/lukasschachner/JellyFederation/pull/3\r\n\r\n\r\n**Full Changelog**: https://github.com/lukasschachner/JellyFederation/compare/v1.0.0...v1.1.0",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/lukasschachner/JellyFederation/releases/download/v1.1.0/jellyfederation_1.1.0.zip",
+        "checksum": "6d35f96d3bb0666c7e029462bebf900e",
+        "timestamp": "2026-04-14T22:54:21Z"
+      },
+      {
         "version": "1.0.0",
         "changelog": "## What's Changed\r\n* feat: add quic transport by @lukasschachner in https://github.com/lukasschachner/JellyFederation/pull/1\r\n* feat: implement error and operation outcome mapping with utilities fo\u2026 by @lukasschachner in https://github.com/lukasschachner/JellyFederation/pull/2\r\n\r\n## New Contributors\r\n* @lukasschachner made their first contribution in https://github.com/lukasschachner/JellyFederation/pull/1\r\n\r\n**Full Changelog**: https://github.com/lukasschachner/JellyFederation/commits/v1.0.0",
         "targetAbi": "10.11.0.0",
