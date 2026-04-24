@@ -1,60 +1,54 @@
 <Project Sdk="Microsoft.NET.Sdk">
-
-    <PropertyGroup>
-        <TargetFramework>net9.0</TargetFramework>
-        <ImplicitUsings>enable</ImplicitUsings>
-        <Nullable>enable</Nullable>
-        <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
-        <Version>1.1.1.0</Version>
-        <AssemblyVersion>1.1.1.0</AssemblyVersion>
-        <FileVersion>1.1.1.0</FileVersion>
-    </PropertyGroup>
-
-    <ItemGroup>
-        <!-- Compile-time only — Jellyfin's runtime provides these DLLs -->
-        <PackageReference Include="Jellyfin.Controller" Version="10.11.8">
-            <PrivateAssets>all</PrivateAssets>
-            <ExcludeAssets>runtime</ExcludeAssets>
-            <IncludeAssets>compile; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-        </PackageReference>
-        <PackageReference Include="Jellyfin.Data" Version="10.11.8">
-            <PrivateAssets>all</PrivateAssets>
-            <ExcludeAssets>runtime</ExcludeAssets>
-            <IncludeAssets>compile; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-        </PackageReference>
-        <PackageReference Include="Jellyfin.Model" Version="10.11.8">
-            <PrivateAssets>all</PrivateAssets>
-            <ExcludeAssets>runtime</ExcludeAssets>
-            <IncludeAssets>compile; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
-        </PackageReference>
-        <!-- SignalR client — ship it, but strip its Microsoft.Extensions.* transitive deps below -->
-        <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" Version="8.0.13"/>
-        <!-- WebRTC DataChannel stack — shipped with the plugin (natives in runtimes/linux-x64/native/) -->
-        <PackageReference Include="SIPSorcery" Version="10.0.3"/>
-        <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12"/>
-    </ItemGroup>
-
-    <ItemGroup>
-        <ProjectReference Include="..\JellyFederation.Shared\JellyFederation.Shared.csproj"/>
-    </ItemGroup>
-
-    <ItemGroup>
-        <EmbeddedResource Include="Web\configurationpage.html"/>
-        <EmbeddedResource Include="Web\configurationpage.js"/>
-    </ItemGroup>
-
-    <!--
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Version>1.1.1.0</Version>
+    <AssemblyVersion>1.1.1.0</AssemblyVersion>
+    <FileVersion>1.1.1.0</FileVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Compile-time only — Jellyfin's runtime provides these DLLs -->
+    <PackageReference Include="Jellyfin.Controller">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+      <IncludeAssets>compile; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Jellyfin.Data">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+      <IncludeAssets>compile; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Jellyfin.Model">
+      <PrivateAssets>all</PrivateAssets>
+      <ExcludeAssets>runtime</ExcludeAssets>
+      <IncludeAssets>compile; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <!-- SignalR client — ship it, but strip its Microsoft.Extensions.* transitive deps below -->
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Client" />
+    <!-- WebRTC DataChannel stack — shipped with the plugin (natives in runtimes/linux-x64/native/) -->
+    <PackageReference Include="SIPSorcery" />
+    <PackageReference Include="SixLabors.ImageSharp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JellyFederation.Shared\JellyFederation.Shared.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Web\configurationpage.html" />
+    <EmbeddedResource Include="Web\configurationpage.js" />
+  </ItemGroup>
+  <!--
       Remove Microsoft.Extensions.* DLLs from the publish output.
       Jellyfin already ships these in its AppDomain; duplicating them causes
       assembly binding conflicts and the plugin gets marked NotSupported.
     -->
-    <Target Name="StripJellyfinProvidedDlls" AfterTargets="Publish">
-        <ItemGroup>
-            <_ToDelete Include="$(PublishDir)Microsoft.Extensions.*.dll"/>
-            <_ToDelete Include="$(PublishDir)Microsoft.Extensions.DependencyInjection.dll"/>
-        </ItemGroup>
-        <Delete Files="@(_ToDelete)"/>
-        <Message Text="Stripped Jellyfin-provided Microsoft.Extensions DLLs from publish output." Importance="high"/>
-    </Target>
-
+  <Target Name="StripJellyfinProvidedDlls" AfterTargets="Publish">
+    <ItemGroup>
+      <_ToDelete Include="$(PublishDir)Microsoft.Extensions.*.dll" />
+      <_ToDelete Include="$(PublishDir)Microsoft.Extensions.DependencyInjection.dll" />
+    </ItemGroup>
+    <Delete Files="@(_ToDelete)" />
+    <Message Text="Stripped Jellyfin-provided Microsoft.Extensions DLLs from publish output." Importance="high" />
+  </Target>
 </Project>

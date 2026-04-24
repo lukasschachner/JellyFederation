@@ -1,25 +1,21 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
-
-    <PropertyGroup>
-        <TargetFramework>net10.0</TargetFramework>
-        <Nullable>enable</Nullable>
-        <ImplicitUsings>enable</ImplicitUsings>
-    </PropertyGroup>
-
-    <ItemGroup>
-        <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
-        <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
-        <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
-        <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.1" />
-        <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.0" />
-        <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7" />
-    </ItemGroup>
-
-    <ItemGroup>
-        <ProjectReference Include="..\JellyFederation.Data\JellyFederation.Data.csproj" />
-        <ProjectReference Include="..\JellyFederation.Migrations.Sqlite\JellyFederation.Migrations.Sqlite.csproj" />
-        <ProjectReference Include="..\JellyFederation.Migrations.PostgreSQL\JellyFederation.Migrations.PostgreSQL.csproj" />
-        <ProjectReference Include="..\JellyFederation.Shared\JellyFederation.Shared.csproj" />
-    </ItemGroup>
-
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+    <PackageReference Include="Swashbuckle.AspNetCore" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\JellyFederation.Data\JellyFederation.Data.csproj" />
+    <ProjectReference Include="..\JellyFederation.Migrations.Sqlite\JellyFederation.Migrations.Sqlite.csproj" />
+    <ProjectReference Include="..\JellyFederation.Migrations.PostgreSQL\JellyFederation.Migrations.PostgreSQL.csproj" />
+    <ProjectReference Include="..\JellyFederation.Shared\JellyFederation.Shared.csproj" />
+  </ItemGroup>
 </Project>
