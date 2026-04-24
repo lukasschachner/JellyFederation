@@ -8,6 +8,7 @@
         <Project Path="src/JellyFederation.Shared/JellyFederation.Shared.csproj"/>
     </Folder>
     <Folder Name="/tests/">
+        <Project Path="tests/JellyFederation.Plugin.Tests/JellyFederation.Plugin.Tests.csproj"/>
         <Project Path="tests/JellyFederation.Server.Tests/JellyFederation.Server.Tests.csproj"/>
     </Folder>
 </Solution>
