@@ -15,18 +15,30 @@ Auto-generated from all feature plans. Last updated: 2026-04-15
 ## Project Structure
 
 ```text
-backend/
-frontend/
-tests/
+src/JellyFederation.Plugin/                 # Jellyfin plugin (.NET 9)
+src/JellyFederation.Server/                 # ASP.NET Core API + SignalR server (.NET 10)
+src/JellyFederation.Shared/                 # Shared DTOs/models/SignalR/telemetry (net9.0;net10.0)
+src/JellyFederation.Data/                   # EF Core DbContext/model configuration
+src/JellyFederation.Migrations.Sqlite/      # SQLite migrations + design-time factory
+src/JellyFederation.Migrations.PostgreSQL/  # PostgreSQL migrations + design-time factory
+src/JellyFederation.Web/                    # Server registration/management frontend
+tests/JellyFederation.Plugin.Tests/
+tests/JellyFederation.Server.Tests/
 ```
 
 ## Commands
 
-# Add commands for C# (.NET 9/10; `net9.0`, `net10.0`)
+```bash
+dotnet build JellyFederation.slnx
+dotnet test JellyFederation.slnx
+./dev.sh stack-up
+./dev.sh stack-status
+```
 
 ## Code Style
 
-C# (.NET 9/10; `net9.0`, `net10.0`): Follow standard conventions
+Follow `.specify/memory/constitution.md`: stable shared contracts, result-based expected failures,
+privacy-safe OpenTelemetry, provider-aware EF Core, async/cancellable I/O, nullable-enabled modern C#.
 
 ## Recent Changes
 - 004-webrtc-datachannel: Added C# on .NET 9 (plugin), .NET 10 (server)

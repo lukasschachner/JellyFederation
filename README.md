@@ -7,7 +7,18 @@ JellyFederation is a Jellyfin plugin + companion server for federated media disc
 - `src/JellyFederation.Plugin`: Jellyfin plugin (configuration page, startup service, sync, transfer).
 - `src/JellyFederation.Server`: federation API + SignalR hub.
 - `src/JellyFederation.Shared`: contracts shared by plugin and server.
+- `src/JellyFederation.Data`: EF Core DbContext and persistence configuration.
+- `src/JellyFederation.Migrations.Sqlite`: SQLite provider migrations.
+- `src/JellyFederation.Migrations.PostgreSQL`: PostgreSQL provider migrations.
 - `src/JellyFederation.Web`: frontend for server registration and management.
+- `tests/`: plugin and server test projects.
+
+## Project constitution
+
+Development is governed by `.specify/memory/constitution.md`. Feature specs and
+plans must preserve stable federation contracts, result-based failures,
+privacy-safe OpenTelemetry, provider-aware EF Core migrations, and independently
+testable increments.
 
 ## Local development
 
