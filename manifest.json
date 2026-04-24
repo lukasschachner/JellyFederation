@@ -8,6 +8,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "1.2.0",
+        "changelog": "## What's Changed\n\n### WebRTC reliability\n- Harden ICE signaling by buffering early offers and candidates until sessions and remote descriptions are ready.\n- Fix WebRTC session cancellation ownership and cleanup after success, failure, cancellation, and relay fallback.\n- Add sender-side DataChannel open timeout with automatic relay fallback.\n- Replace ad-hoc DataChannel EOF/header magic with typed transfer frames.\n- Add bounded receive queues and DataChannel send backpressure to reduce memory growth.\n- Preserve relay transfer metadata and update transfer status when relay fallback is engaged.\n\n### TURN support\n- Add optional TURN server, username, and credential settings for restrictive NAT/firewall environments.\n\n### Documentation and tests\n- Add WebRTC remediation review, tracking tasks, and range/seek streaming design notes.\n- Add plugin-side WebRTC component coverage for frame handling, buffering/backpressure, signaling safeguards, and TURN configuration.\n\n## Validation\n\n- `dotnet build JellyFederation.slnx`\n- `dotnet test --solution JellyFederation.slnx`\n- `slopwatch analyze --fail-on warning`",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/lukasschachner/JellyFederation/releases/download/v1.2.0/jellyfederation_1.2.0.zip",
+        "checksum": "c8076af3d9d8af981bc401886489185f",
+        "timestamp": "2026-04-24T22:24:49Z"
+      },
+      {
         "version": "1.1.0",
         "changelog": "## What's Changed\r\n* feat(webrtc): add ICE transfer and relay fallback by @lukasschachner in https://github.com/lukasschachner/JellyFederation/pull/3\r\n\r\n\r\n**Full Changelog**: https://github.com/lukasschachner/JellyFederation/compare/v1.0.0...v1.1.0",
         "targetAbi": "10.11.0.0",
