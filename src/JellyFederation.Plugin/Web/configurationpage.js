@@ -1,10 +1,18 @@
 (function () {
     'use strict';
 
+    if (window.__jellyFederationConfigScriptInitialized === true) {
+        return;
+    }
+
+    window.__jellyFederationConfigScriptInitialized = true;
+
     var pluginId = 'e5c0cda1-805e-41e2-9654-e17143dc31a1';
     var pageId = 'JellyFederationConfigPage';
+    var formId = 'JellyFederationConfigForm';
     var defaultHolePunchPort = 0;
     var defaultLargeFileQuicThresholdBytes = 536870912;
+    var observerTimeoutMs = 30000;
 
     function getPage(element) {
         return element && element.closest ? element.closest('#' + pageId) : document.getElementById(pageId);
@@ -59,10 +67,23 @@
         }
     }
 
+    function processSaveResult(result) {
+        if (window.Dashboard && Dashboard.processPluginConfigurationUpdateResult) {
+            Dashboard.processPluginConfigurationUpdateResult(result);
+            return;
+        }
+
+        showAlert('JellyFederation', 'Settings saved.');
+    }
+
     function loadConfig(page) {
+        if (!page || !window.ApiClient || !ApiClient.getPluginConfiguration) {
+            return Promise.resolve();
+        }
+
         showLoadingMessage();
 
-        ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+        return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
             config = config || {};
 
             setInputValue(page, '#federationServerUrl', config.FederationServerUrl);
@@ -76,18 +97,23 @@
             setInputValue(page, '#holePunchPort', config.HolePunchPort || defaultHolePunchPort);
             setChecked(page, '#preferQuicForLargeFiles', config.PreferQuicForLargeFiles !== false);
             setInputValue(page, '#largeFileQuicThresholdBytes', config.LargeFileQuicThresholdBytes || defaultLargeFileQuicThresholdBytes);
-            hideLoadingMessage();
         }).catch(function (err) {
             console.error('[JellyFederation] Failed to load config:', err);
-            hideLoadingMessage();
             showAlert('JellyFederation', 'Failed to load settings. Check the browser console for details.');
+        }).then(function () {
+            hideLoadingMessage();
         });
     }
 
     function saveConfig(form) {
+        if (!form || !window.ApiClient || !ApiClient.getPluginConfiguration || !ApiClient.updatePluginConfiguration) {
+            showAlert('JellyFederation', 'Jellyfin API client is not available yet. Please reopen the settings page and try again.');
+            return Promise.resolve();
+        }
+
         showLoadingMessage();
 
-        ApiClient.getPluginConfiguration(pluginId).then(function (config) {
+        return ApiClient.getPluginConfiguration(pluginId).then(function (config) {
             config = config || {};
 
             config.FederationServerUrl = getTrimmedValue(form, '#federationServerUrl');
@@ -107,18 +133,36 @@
                 defaultLargeFileQuicThresholdBytes);
 
             return ApiClient.updatePluginConfiguration(pluginId, config);
-        }).then(function () {
-            hideLoadingMessage();
-            showAlert('JellyFederation', 'Settings saved.');
+        }).then(function (result) {
+            processSaveResult(result);
         }).catch(function (err) {
             var message = err && (err.message || JSON.stringify(err)) || 'Unknown error';
             console.error('[JellyFederation] Failed to save config:', err);
-            hideLoadingMessage();
             showAlert('JellyFederation', 'Save failed — ' + message);
+        }).then(function () {
+            hideLoadingMessage();
         });
     }
 
-    function bindPage(page) {
+    function handlePageShow(event) {
+        var page = event && event.target ? getPage(event.target) : null;
+        if (page && page.id === pageId) {
+            bindPage(page, false);
+            loadConfig(page);
+        }
+    }
+
+    function handleSubmit(event) {
+        var form = event && event.target && event.target.id === formId ? event.target : null;
+        if (!form) {
+            return;
+        }
+
+        event.preventDefault();
+        saveConfig(form);
+    }
+
+    function bindPage(page, loadImmediately) {
         if (!page || page.dataset.jellyFederationBound === 'true') {
             return;
         }
@@ -128,18 +172,41 @@
             loadConfig(page);
         });
 
-        var form = page.querySelector('#JellyFederationConfigForm');
-        if (form) {
-            form.addEventListener('submit', function (event) {
-                event.preventDefault();
-                saveConfig(form);
-                return false;
-            });
+        if (loadImmediately) {
+            loadConfig(page);
         }
     }
 
+    function findAndBind(loadImmediately) {
+        var pages = document.querySelectorAll('#' + pageId);
+        Array.prototype.forEach.call(pages, function (page) {
+            bindPage(page, loadImmediately);
+        });
+
+        return pages.length > 0;
+    }
+
     function initialize() {
-        Array.prototype.forEach.call(document.querySelectorAll('#' + pageId), bindPage);
+        document.addEventListener('pageshow', handlePageShow);
+        document.addEventListener('submit', handleSubmit, true);
+
+        if (findAndBind(true)) {
+            return;
+        }
+
+        var observer = new MutationObserver(function () {
+            if (findAndBind(true)) {
+                observer.disconnect();
+                window.clearTimeout(observerTimeoutId);
+            }
+        });
+
+        var observerRoot = document.body || document.documentElement;
+        observer.observe(observerRoot, { childList: true, subtree: true });
+
+        var observerTimeoutId = window.setTimeout(function () {
+            observer.disconnect();
+        }, observerTimeoutMs);
     }
 
     if (document.readyState === 'loading') {
