@@ -47,7 +47,9 @@ public partial class LibraryController : AuthenticatedController
         LogSyncStarted(_logger, server.Id, request.Items.Count, request.ReplaceAll);
 
         // Differential sync: update changed items, add new ones, remove stale ones
+        // AsTracking required — items in this dictionary are mutated then saved via SaveChangesAsync.
         var existing = await _db.MediaItems
+            .AsTracking()
             .Where(m => m.ServerId == server.Id)
             .ToDictionaryAsync(m => m.JellyfinItemId).ConfigureAwait(false);
 
@@ -118,11 +120,13 @@ public partial class LibraryController : AuthenticatedController
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 100)
     {
-        pageSize = Math.Min(pageSize, 500);
+        if (TryValidatePagination(page, pageSize) is { } validationFailure)
+            return validationFailure;
+
         var server = CurrentServer;
 
         var query = _db.MediaItems
-            .Include(m => m.Server)
+            .AsNoTracking()
             .Where(m => m.ServerId == server.Id);
 
         query = ApplyTitleSearch(query, search);
@@ -136,14 +140,20 @@ public partial class LibraryController : AuthenticatedController
         var total = await query.CountAsync().ConfigureAwait(false);
         Response.Headers["X-Total-Count"] = total.ToString();
 
+        // All items belong to CurrentServer — capture the name once as a constant rather than joining.
+        var serverName = server.Name;
         var items = await query
             .OrderBy(m => m.Title)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
+            .Select(m => new MediaItemDto(
+                m.Id, m.ServerId, serverName,
+                m.JellyfinItemId, m.Title, m.Type,
+                m.Year, m.Overview, m.ImageUrl, m.FileSizeBytes, m.IsRequestable))
             .ToListAsync().ConfigureAwait(false);
         LogMineReturned(_logger, server.Id, total, page, pageSize, search, type);
 
-        return Ok(items.Select(ToDto));
+        return Ok(items);
     }
 
     /// <summary>
@@ -155,7 +165,11 @@ public partial class LibraryController : AuthenticatedController
     {
         var server = CurrentServer;
 
-        var query = ApplyTitleSearch(_db.MediaItems.Where(m => m.ServerId == server.Id), search);
+        var query = ApplyTitleSearch(
+            _db.MediaItems
+                .AsNoTracking()
+                .Where(m => m.ServerId == server.Id),
+            search);
 
         var counts = await query
             .GroupBy(m => m.Type)
@@ -178,7 +192,9 @@ public partial class LibraryController : AuthenticatedController
     {
         var server = CurrentServer;
 
-        var item = await _db.MediaItems.FirstOrDefaultAsync(m => m.Id == itemId && m.ServerId == server.Id)
+        var item = await _db.MediaItems
+            .AsTracking()
+            .FirstOrDefaultAsync(m => m.Id == itemId && m.ServerId == server.Id)
             .ConfigureAwait(false);
         if (item is null)
         {
@@ -206,23 +222,30 @@ public partial class LibraryController : AuthenticatedController
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 100)
     {
-        pageSize = Math.Min(pageSize, 500);
+        if (TryValidatePagination(page, pageSize) is { } validationFailure)
+            return validationFailure;
+
         var server = CurrentServer;
 
-        var query = GetBrowsableItems(server, search, type)
-            .Include(m => m.Server);
+        var baseQuery = GetBrowsableItems(server, search, type);
 
-        var total = await query.CountAsync().ConfigureAwait(false);
+        var total = await baseQuery.CountAsync().ConfigureAwait(false);
         Response.Headers["X-Total-Count"] = total.ToString();
 
-        var items = await query
+        // Project to DTO in-query so EF Core only selects the columns we need.
+        // m.Server.Name is translated to a JOIN on the fly — no Include required.
+        var items = await baseQuery
             .OrderBy(m => m.Title)
             .Skip((page - 1) * pageSize)
             .Take(pageSize)
+            .Select(m => new MediaItemDto(
+                m.Id, m.ServerId, m.Server.Name,
+                m.JellyfinItemId, m.Title, m.Type,
+                m.Year, m.Overview, m.ImageUrl, m.FileSizeBytes, m.IsRequestable))
             .ToListAsync().ConfigureAwait(false);
         LogBrowseReturned(_logger, server.Id, total, page, pageSize, search, type);
 
-        return Ok(items.Select(ToDto));
+        return Ok(items);
     }
 
     /// <summary>
@@ -259,6 +282,7 @@ public partial class LibraryController : AuthenticatedController
             .Select(i => i.FromServerId == server.Id ? i.ToServerId : i.FromServerId);
 
         var query = _db.MediaItems
+            .AsNoTracking()
             .Where(m => allowedServerIds.Contains(m.ServerId) && m.IsRequestable);
 
         query = ApplyTitleSearch(query, search);
@@ -270,6 +294,17 @@ public partial class LibraryController : AuthenticatedController
             LogInvalidMediaTypeFilter(_logger, type, "browse");
 
         return query;
+    }
+
+    private ObjectResult? TryValidatePagination(int page, int pageSize)
+    {
+        if (page >= 1 && pageSize is >= 1 and <= 500)
+            return null;
+
+        return ErrorContractMapper.ToActionResult(FailureDescriptor.Validation(
+            "library.pagination.invalid",
+            "Invalid pagination parameters. page must be >= 1 and pageSize must be between 1 and 500.",
+            CorrelationId));
     }
 
     private static IQueryable<MediaItem> ApplyTitleSearch(IQueryable<MediaItem> query, string? search)
@@ -285,14 +320,11 @@ public partial class LibraryController : AuthenticatedController
         return input.Replace(@"\", @"\\").Replace("%", @"\%").Replace("_", @"\_").Replace("[", @"\[");
     }
 
-    private static MediaItemDto ToDto(MediaItem m)
-    {
-        return new MediaItemDto(
-            m.Id, m.ServerId, m.Server.Name,
+    // ToDto kept for completeness but no longer called by read endpoints (they use projections).
+    private static MediaItemDto ToDto(MediaItem m, string serverName) =>
+        new(m.Id, m.ServerId, serverName,
             m.JellyfinItemId, m.Title, m.Type,
-            m.Year, m.Overview, m.ImageUrl, m.FileSizeBytes,
-            m.IsRequestable);
-    }
+            m.Year, m.Overview, m.ImageUrl, m.FileSizeBytes, m.IsRequestable);
 }
 
 public record SetRequestableRequest

@@ -53,8 +53,11 @@ public partial class ServerConnectionTracker
         _serverToConnection[serverId] = connectionId;
         _connectionToServer[connectionId] = serverId;
         _connectionPublicIp[connectionId] = publicIp;
-        if (!_activeConnections.ContainsKey(serverId))
-            _activeConnections[serverId] = FederationMetrics.BeginInflight("signalr.connection", "server");
+        // Use TryAdd to avoid a TOCTOU race between ContainsKey and the assignment.
+        // If another thread wins, dispose our scope so the inflight counter stays accurate.
+        var newScope = FederationMetrics.BeginInflight("signalr.connection", "server");
+        if (!_activeConnections.TryAdd(serverId, newScope))
+            newScope.Dispose();
         LogRegisteredConnection(_logger, serverId, connectionId, publicIp);
     }
 
@@ -110,16 +113,19 @@ public partial class ServerConnectionTracker
     {
         var entry = new IceCandidacy(serverId, connectionId);
 
+        // Array has at most 2 elements; avoid LINQ allocations with direct index comparisons.
         candidates = _iceCandidacies.AddOrUpdate(
             fileRequestId,
             _ => [entry],
-            (_, existing) =>
+            (_, existing) => existing.Length switch
             {
-                var others = existing.Where(c => c.ServerId != serverId).ToArray();
-                return [.. others, entry];
+                0 => [entry],
+                1 when existing[0].ServerId == serverId => [entry],           // replace same peer
+                1 => [existing[0], entry],                                     // add second peer
+                _ => existing[0].ServerId == serverId ? [entry, existing[1]] : [existing[0], entry]
             });
 
-        if (candidates.Select(c => c.ServerId).Distinct().Count() >= 2)
+        if (candidates.Length >= 2 && candidates[0].ServerId != candidates[1].ServerId)
         {
             _iceCandidacies.TryRemove(fileRequestId, out _);
             return true;
@@ -145,19 +151,21 @@ public partial class ServerConnectionTracker
         var threshold = largeFileThresholdBytes > 0 ? largeFileThresholdBytes : long.MaxValue;
         var entry = new HolePunchCandidate(serverId, connectionId, udpPort, supportsQuic, threshold, supportsIce);
 
+        // Array has at most 2 elements; avoid LINQ allocations with direct index comparisons.
         candidates = _holePunchStaging.AddOrUpdate(
             fileRequestId,
             _ => [entry],
-            (_, existing) =>
+            (_, existing) => existing.Length switch
             {
-                // Replace any existing entry for this server (handles reconnect/resend)
-                var others = existing.Where(c => c.ServerId != serverId).ToArray();
-                return [.. others, entry];
+                0 => [entry],
+                1 when existing[0].ServerId == serverId => [entry],           // replace same peer (reconnect)
+                1 => [existing[0], entry],                                     // add second peer
+                _ => existing[0].ServerId == serverId ? [entry, existing[1]] : [existing[0], entry]
             });
         LogHolePunchStaged(_logger, fileRequestId, serverId, udpPort, candidates.Length);
 
         // Dispatch only when we have exactly one entry per side (distinct servers)
-        if (candidates.Select(c => c.ServerId).Distinct().Count() >= 2)
+        if (candidates.Length >= 2 && candidates[0].ServerId != candidates[1].ServerId)
         {
             _holePunchStaging.TryRemove(fileRequestId, out _);
             LogHolePunchReadyToDispatch(_logger, fileRequestId, candidates.Length);

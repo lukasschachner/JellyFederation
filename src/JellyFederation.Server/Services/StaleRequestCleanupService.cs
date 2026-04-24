@@ -57,7 +57,9 @@ public partial class StaleRequestCleanupService : BackgroundService
 
         var cutoff = DateTime.UtcNow - StaleThreshold;
 
+        // AsTracking required — each stale request's Status/FailureReason is mutated below.
         var stale = await db.FileRequests
+            .AsTracking()
             .Where(r =>
                 (r.Status == FileRequestStatus.Pending ||
                  r.Status == FileRequestStatus.HolePunching ||

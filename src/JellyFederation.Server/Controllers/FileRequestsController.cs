@@ -130,22 +130,63 @@ public partial class FileRequestsController : AuthenticatedController
     {
         var server = CurrentServer;
 
+        // Project to an anonymous type to avoid loading full tracked server entities.
+        // r.RequestingServer.Name and r.OwningServer.Name are translated to JOINs by EF Core.
         var requests = await _db.FileRequests
-            .Include(r => r.RequestingServer)
-            .Include(r => r.OwningServer)
+            .AsNoTracking()
             .Where(r => r.RequestingServerId == server.Id || r.OwningServerId == server.Id)
             .OrderByDescending(r => r.CreatedAt)
+            .Select(r => new
+            {
+                r.Id,
+                r.RequestingServerId,
+                RequestingServerName = r.RequestingServer.Name,
+                r.OwningServerId,
+                OwningServerName = r.OwningServer.Name,
+                r.JellyfinItemId,
+                r.Status,
+                r.SelectedTransportMode,
+                r.FailureCategory,
+                r.BytesTransferred,
+                r.TotalBytes,
+                r.FailureReason,
+                r.CreatedAt
+            })
             .ToListAsync().ConfigureAwait(false);
 
-        // Batch-load item titles from the media items table
         var itemIds = requests.Select(r => r.JellyfinItemId).Distinct().ToList();
-        var titles = await _db.MediaItems
-            .Where(m => itemIds.Contains(m.JellyfinItemId))
-            .Select(m => new { m.JellyfinItemId, m.Title })
-            .ToDictionaryAsync(m => m.JellyfinItemId, m => m.Title).ConfigureAwait(false);
+        var ownerIds = requests.Select(r => r.OwningServerId).Distinct().ToList();
+        var titles = itemIds.Count == 0
+            ? new Dictionary<(Guid ServerId, string JellyfinItemId), string>()
+            : await _db.MediaItems
+                .AsNoTracking()
+                .Where(m => ownerIds.Contains(m.ServerId) && itemIds.Contains(m.JellyfinItemId))
+                .Select(m => new { m.ServerId, m.JellyfinItemId, m.Title })
+                .ToDictionaryAsync(m => (m.ServerId, m.JellyfinItemId), m => m.Title)
+                .ConfigureAwait(false);
         LogListReturned(_logger, server.Id, requests.Count);
 
-        return Ok(requests.Select(r => ToDto(r, titles.GetValueOrDefault(r.JellyfinItemId))));
+        return Ok(requests.Select(r => new FileRequestDto(
+            r.Id,
+            r.RequestingServerId, r.RequestingServerName,
+            r.OwningServerId, r.OwningServerName,
+            r.JellyfinItemId, titles.GetValueOrDefault((r.OwningServerId, r.JellyfinItemId)),
+            r.Status, r.SelectedTransportMode, r.FailureCategory,
+            r.BytesTransferred, r.TotalBytes, r.FailureReason,
+            r.FailureReason is null
+                ? null
+                : ErrorContractMapper.ToContract(new FailureDescriptor(
+                    $"request.{(r.FailureCategory ?? TransferFailureCategory.Unknown).ToString().ToLowerInvariant()}",
+                    r.FailureCategory switch
+                    {
+                        TransferFailureCategory.Timeout => FailureCategory.Timeout,
+                        TransferFailureCategory.Connectivity => FailureCategory.Connectivity,
+                        TransferFailureCategory.Reliability => FailureCategory.Reliability,
+                        TransferFailureCategory.Cancelled => FailureCategory.Cancelled,
+                        _ => FailureCategory.Unexpected
+                    },
+                    r.FailureReason)),
+            r.CreatedAt)));
     }
 
     [HttpPut("{id}/cancel")]

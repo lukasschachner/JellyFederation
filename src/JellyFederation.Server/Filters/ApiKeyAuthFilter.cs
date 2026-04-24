@@ -32,9 +32,11 @@ public partial class ApiKeyAuthFilter : IAsyncActionFilter
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
         var startedAt = Stopwatch.StartNew();
-        var headers = context.HttpContext.Request.Headers
-            .ToDictionary(h => h.Key.ToLowerInvariant(), h => (string?)h.Value.ToString());
-        var correlationId = TraceContextPropagation.ExtractCorrelationId(headers);
+        // Read the correlation ID directly instead of materialising all headers into a dictionary.
+        var correlationId = context.HttpContext.Request.Headers.TryGetValue("X-Correlation-ID", out var cid) &&
+                            !string.IsNullOrWhiteSpace(cid)
+            ? cid.ToString().Trim()
+            : FederationTelemetry.CreateCorrelationId();
         context.HttpContext.Items["CorrelationId"] = correlationId;
 
         using var activity = FederationTelemetry.ServerActivitySource.StartActivity(
@@ -60,7 +62,10 @@ public partial class ApiKeyAuthFilter : IAsyncActionFilter
         if (!_cache.TryGetValue(cacheKey, out RegisteredServer? server))
         {
             LogApiKeyCacheMiss(_logger, context.HttpContext.Request.Path);
-            server = await _db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey).ConfigureAwait(false);
+            server = await _db.Servers
+                .AsNoTracking()
+                .FirstOrDefaultAsync(s => s.ApiKey == apiKey)
+                .ConfigureAwait(false);
             if (server is not null)
                 _cache.Set(cacheKey, server, CacheTtl);
         }

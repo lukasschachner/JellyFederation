@@ -40,6 +40,12 @@ public class FederationDbContext : DbContext
             e.HasIndex(m => new { m.ServerId, m.Title });
         });
 
+        modelBuilder.Entity<Invitation>(e =>
+        {
+            e.HasIndex(i => new { i.FromServerId, i.Status });
+            e.HasIndex(i => new { i.ToServerId, i.Status });
+        });
+
         modelBuilder.Entity<FileRequest>(e =>
         {
             e.HasOne(r => r.RequestingServer)
@@ -50,6 +56,9 @@ public class FederationDbContext : DbContext
                 .WithMany()
                 .HasForeignKey(r => r.OwningServerId)
                 .OnDelete(DeleteBehavior.Restrict);
+            e.HasIndex(r => new { r.RequestingServerId, r.Status });
+            e.HasIndex(r => new { r.OwningServerId, r.Status });
+            e.HasIndex(r => new { r.Status, r.CreatedAt });
         });
     }
 }

@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations;
 using JellyFederation.Shared.Models;
 
 namespace JellyFederation.Shared.Dtos;
@@ -59,26 +60,32 @@ public record MediaItemDto
     }
 }
 
-public record SyncMediaRequest
+public sealed class SyncMediaRequest
 {
+    public SyncMediaRequest()
+    {
+    }
+
     public SyncMediaRequest(List<MediaItemSyncEntry> Items, bool ReplaceAll = true)
     {
         this.Items = Items;
         this.ReplaceAll = ReplaceAll;
     }
 
-    public List<MediaItemSyncEntry> Items { get; init; }
-    public bool ReplaceAll { get; init; }
+    [Required]
+    [MinLength(1)]
+    [MaxLength(10000)]
+    public List<MediaItemSyncEntry> Items { get; init; } = [];
 
-    public void Deconstruct(out List<MediaItemSyncEntry> Items, out bool ReplaceAll)
-    {
-        Items = this.Items;
-        ReplaceAll = this.ReplaceAll;
-    }
+    public bool ReplaceAll { get; init; } = true;
 }
 
-public record MediaItemSyncEntry
+public sealed class MediaItemSyncEntry
 {
+    public MediaItemSyncEntry()
+    {
+    }
+
     public MediaItemSyncEntry(string JellyfinItemId,
         string Title,
         MediaType Type,
@@ -96,23 +103,17 @@ public record MediaItemSyncEntry
         this.FileSizeBytes = FileSizeBytes;
     }
 
-    public string JellyfinItemId { get; init; }
-    public string Title { get; init; }
+    [Required]
+    [StringLength(256, MinimumLength = 1)]
+    public string JellyfinItemId { get; init; } = string.Empty;
+
+    [Required]
+    [StringLength(512, MinimumLength = 1)]
+    public string Title { get; init; } = string.Empty;
+
     public MediaType Type { get; init; }
     public int? Year { get; init; }
     public string? Overview { get; init; }
     public string? ImageUrl { get; init; }
     public long FileSizeBytes { get; init; }
-
-    public void Deconstruct(out string JellyfinItemId, out string Title, out MediaType Type, out int? Year,
-        out string? Overview, out string? ImageUrl, out long FileSizeBytes)
-    {
-        JellyfinItemId = this.JellyfinItemId;
-        Title = this.Title;
-        Type = this.Type;
-        Year = this.Year;
-        Overview = this.Overview;
-        ImageUrl = this.ImageUrl;
-        FileSizeBytes = this.FileSizeBytes;
-    }
 }

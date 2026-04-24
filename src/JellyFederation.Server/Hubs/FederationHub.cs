@@ -54,7 +54,10 @@ public partial class FederationHub : Hub
             return null;
         }
 
-        var server = await _db.Servers.FirstOrDefaultAsync(s => s.ApiKey == apiKey).ConfigureAwait(false);
+        // AsTracking required — server.IsOnline/LastSeenAt are mutated in OnConnectedAsync.
+        var server = await _db.Servers
+            .AsTracking()
+            .FirstOrDefaultAsync(s => s.ApiKey == apiKey).ConfigureAwait(false);
         if (server is null)
             LogHubAuthenticationFailed(_logger, Context.ConnectionId);
         return server;
@@ -103,8 +106,10 @@ public partial class FederationHub : Hub
     private async Task ResendPendingNotificationsAsync(RegisteredServer server)
     {
         var pending = await _db.FileRequests
+            .AsNoTracking()
             .Where(r => (r.Status == FileRequestStatus.Pending || r.Status == FileRequestStatus.HolePunching) &&
                         (r.OwningServerId == server.Id || r.RequestingServerId == server.Id))
+            .Select(r => new { r.Id, r.JellyfinItemId, r.RequestingServerId, r.OwningServerId })
             .ToListAsync().ConfigureAwait(false);
 
         foreach (var req in pending)
@@ -258,6 +263,18 @@ public partial class FederationHub : Hub
         FederationTelemetry.SetCommonTags(activity, "holepunch.result", "server", correlationId,
             releaseVersion: "server");
 
+        var senderId = _tracker.GetServerId(Context.ConnectionId);
+        if (senderId is null)
+        {
+            LogHubWorkflowUnknownConnection(_logger, nameof(ReportHolePunchResult), Context.ConnectionId,
+                result.FileRequestId);
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
+            FederationMetrics.RecordOperation("holepunch.result", "server", FederationTelemetry.OutcomeError,
+                startedAt.Elapsed, failureCategory: FailureCategory.Authorization.ToString(),
+                failureCode: "holepunch.result.unauthorized_connection");
+            return;
+        }
+
         var request = await _db.FileRequests.FindAsync(result.FileRequestId).ConfigureAwait(false);
         if (request is null)
         {
@@ -266,6 +283,23 @@ public partial class FederationHub : Hub
                 "holepunch.result.request_not_found",
                 "File request not found.",
                 correlationId);
+            LogWorkflowFailureDescriptor(_logger, result.FileRequestId, failure.Code, failure.Category.ToString(),
+                failure.Message);
+            FederationTelemetry.SetFailure(activity, failure);
+            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
+            FederationMetrics.RecordOperation("holepunch.result", "server", FederationTelemetry.OutcomeError,
+                startedAt.Elapsed, failureCategory: failure.Category.ToString(), failureCode: failure.Code);
+            return;
+        }
+
+        if (senderId.Value != request.OwningServerId && senderId.Value != request.RequestingServerId)
+        {
+            var failure = FailureDescriptor.Authorization(
+                "holepunch.result.forbidden",
+                "Only participating servers may report hole punch results.",
+                correlationId);
+            LogHubWorkflowUnauthorizedParticipant(_logger, nameof(ReportHolePunchResult), result.FileRequestId,
+                senderId.Value, request.OwningServerId, request.RequestingServerId);
             LogWorkflowFailureDescriptor(_logger, result.FileRequestId, failure.Code, failure.Category.ToString(),
                 failure.Message);
             FederationTelemetry.SetFailure(activity, failure);
@@ -310,11 +344,11 @@ public partial class FederationHub : Hub
 
     private async Task DispatchHolePunch(FileRequest request, HolePunchCandidate[] candidates)
     {
-        // Identify which candidate is sender (owner) and which is receiver (requester)
-        var sender = candidates.FirstOrDefault(c => c.ServerId == request.OwningServerId);
-        var receiver = candidates.FirstOrDefault(c => c.ServerId == request.RequestingServerId);
+        // candidates is guaranteed to have exactly 2 distinct-server entries at dispatch time.
+        var sender   = candidates[0].ServerId == request.OwningServerId      ? candidates[0] : candidates[1];
+        var receiver = candidates[0].ServerId == request.RequestingServerId  ? candidates[0] : candidates[1];
 
-        if (sender is null || receiver is null)
+        if (sender.ServerId != request.OwningServerId || receiver.ServerId != request.RequestingServerId)
         {
             LogCandidateMatchFailed(_logger, request.Id);
             return;
@@ -402,17 +436,27 @@ public partial class FederationHub : Hub
             return;
         }
 
-        var request = await _db.FileRequests.FindAsync(signal.FileRequestId).ConfigureAwait(false);
-        if (request is null)
+        // Project only the routing fields — no need to load or track the full FileRequest.
+        var routing = await _db.FileRequests
+            .Where(r => r.Id == signal.FileRequestId)
+            .Select(r => new { r.OwningServerId, r.RequestingServerId })
+            .FirstOrDefaultAsync().ConfigureAwait(false);
+        if (routing is null)
         {
             LogForwardIceSignalNotFound(_logger, signal.FileRequestId);
             return;
         }
 
-        // Determine the other peer's server ID
-        var targetServerId = senderId.Value == request.OwningServerId
-            ? request.RequestingServerId
-            : request.OwningServerId;
+        if (senderId.Value != routing.OwningServerId && senderId.Value != routing.RequestingServerId)
+        {
+            LogHubWorkflowUnauthorizedParticipant(_logger, nameof(ForwardIceSignal), signal.FileRequestId,
+                senderId.Value, routing.OwningServerId, routing.RequestingServerId);
+            return;
+        }
+
+        var targetServerId = senderId.Value == routing.OwningServerId
+            ? routing.RequestingServerId
+            : routing.OwningServerId;
 
         var targetConnectionId = _tracker.GetConnectionId(targetServerId);
         if (targetConnectionId is null)
@@ -438,18 +482,28 @@ public partial class FederationHub : Hub
             return;
         }
 
-        var request = await _db.FileRequests.FindAsync(chunk.FileRequestId).ConfigureAwait(false);
-        if (request is null)
+        // Project only routing IDs — we never mutate this entity.
+        var routing = await _db.FileRequests
+            .Where(r => r.Id == chunk.FileRequestId)
+            .Select(r => new { r.OwningServerId, r.RequestingServerId })
+            .FirstOrDefaultAsync().ConfigureAwait(false);
+        if (routing is null)
         {
             LogRelaySendChunkNotFound(_logger, chunk.FileRequestId);
             return;
         }
 
-        var receiverServerId = request.RequestingServerId;
-        var receiverConnectionId = _tracker.GetConnectionId(receiverServerId);
+        if (senderId.Value != routing.OwningServerId)
+        {
+            LogHubWorkflowUnauthorizedParticipant(_logger, nameof(RelaySendChunk), chunk.FileRequestId,
+                senderId.Value, routing.OwningServerId, routing.RequestingServerId);
+            return;
+        }
+
+        var receiverConnectionId = _tracker.GetConnectionId(routing.RequestingServerId);
         if (receiverConnectionId is null)
         {
-            LogRelaySendChunkReceiverOffline(_logger, chunk.FileRequestId, receiverServerId);
+            LogRelaySendChunkReceiverOffline(_logger, chunk.FileRequestId, routing.RequestingServerId);
             return;
         }
 
@@ -463,20 +517,34 @@ public partial class FederationHub : Hub
     public async Task ForwardRelayTransferStart(RelayTransferStart message)
     {
         var senderId = _tracker.GetServerId(Context.ConnectionId);
-        if (senderId is null) return;
+        if (senderId is null)
+        {
+            LogHubWorkflowUnknownConnection(_logger, nameof(ForwardRelayTransferStart), Context.ConnectionId,
+                message.FileRequestId);
+            return;
+        }
 
-        var request = await _db.FileRequests.FindAsync(message.FileRequestId).ConfigureAwait(false);
-        if (request is null) return;
+        // Project only the routing fields — no need to load or track the full FileRequest.
+        var routing = await _db.FileRequests
+            .Where(r => r.Id == message.FileRequestId)
+            .Select(r => new { r.OwningServerId, r.RequestingServerId })
+            .FirstOrDefaultAsync().ConfigureAwait(false);
+        if (routing is null)
+            return;
 
-        var targetServerId = senderId.Value == request.OwningServerId
-            ? request.RequestingServerId
-            : request.OwningServerId;
+        if (senderId.Value != routing.OwningServerId)
+        {
+            LogHubWorkflowUnauthorizedParticipant(_logger, nameof(ForwardRelayTransferStart), message.FileRequestId,
+                senderId.Value, routing.OwningServerId, routing.RequestingServerId);
+            return;
+        }
 
-        var targetConnectionId = _tracker.GetConnectionId(targetServerId);
-        if (targetConnectionId is null) return;
+        var targetConnectionId = _tracker.GetConnectionId(routing.RequestingServerId);
+        if (targetConnectionId is null)
+            return;
 
         await Clients.Client(targetConnectionId).SendAsync("RelayTransferStart", message).ConfigureAwait(false);
-        LogRelayTransferStartForwarded(_logger, message.FileRequestId, targetServerId);
+        LogRelayTransferStartForwarded(_logger, message.FileRequestId, routing.RequestingServerId);
     }
 
     private async Task<TransferSelection> SelectTransportModeAsync(
@@ -509,24 +577,39 @@ public partial class FederationHub : Hub
     /// </summary>
     public async Task ReportTransferProgress(TransferProgress progress)
     {
-        var request = await _db.FileRequests.FindAsync(progress.FileRequestId).ConfigureAwait(false);
-        if (request is null)
+        var senderId = _tracker.GetServerId(Context.ConnectionId);
+        if (senderId is null)
+        {
+            LogHubWorkflowUnknownConnection(_logger, nameof(ReportTransferProgress), Context.ConnectionId,
+                progress.FileRequestId);
+            return;
+        }
+
+        // Project only the IDs needed for SignalR group routing — progress is transient,
+        // no DB write per tick (terminal state is written by MarkCompleted / ReportHolePunchResult).
+        var routing = await _db.FileRequests
+            .Where(r => r.Id == progress.FileRequestId)
+            .Select(r => new { r.Id, r.OwningServerId, r.RequestingServerId })
+            .FirstOrDefaultAsync().ConfigureAwait(false);
+        if (routing is null)
         {
             LogTransferProgressRequestNotFound(_logger, progress.FileRequestId, progress.BytesReceived,
                 progress.TotalBytes);
             return;
         }
 
-        request.BytesTransferred = progress.BytesReceived;
-        request.TotalBytes = progress.TotalBytes;
-        await _db.SaveChangesAsync().ConfigureAwait(false);
+        if (senderId.Value != routing.RequestingServerId)
+        {
+            LogHubWorkflowUnauthorizedParticipant(_logger, nameof(ReportTransferProgress), progress.FileRequestId,
+                senderId.Value, routing.OwningServerId, routing.RequestingServerId);
+            return;
+        }
 
-        // Forward to browser clients watching either server
-        await Clients.Group($"server:{request.OwningServerId}").SendAsync("TransferProgress", progress)
+        await Clients.Group($"server:{routing.OwningServerId}").SendAsync("TransferProgress", progress)
             .ConfigureAwait(false);
-        await Clients.Group($"server:{request.RequestingServerId}").SendAsync("TransferProgress", progress)
+        await Clients.Group($"server:{routing.RequestingServerId}").SendAsync("TransferProgress", progress)
             .ConfigureAwait(false);
-        LogTransferProgressForwarded(_logger, request.Id, request.OwningServerId, request.RequestingServerId,
+        LogTransferProgressForwarded(_logger, routing.Id, routing.OwningServerId, routing.RequestingServerId,
             progress.BytesReceived, progress.TotalBytes);
     }
 

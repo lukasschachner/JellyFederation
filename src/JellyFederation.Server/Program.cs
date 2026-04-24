@@ -1,12 +1,15 @@
 using System.Diagnostics;
+using System.Net;
 using System.Reflection;
 using System.Text.Json.Serialization;
 using JellyFederation.Data;
 using JellyFederation.Server.Filters;
 using JellyFederation.Server.Hubs;
 using JellyFederation.Server.Services;
+using JellyFederation.Shared.Models;
 using JellyFederation.Shared.Telemetry;
 using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using OpenTelemetry.Logs;
@@ -59,6 +62,27 @@ builder.WebHost.ConfigureKestrel(options =>
 builder.Services.AddControllers()
     .AddJsonOptions(o =>
         o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+builder.Services.Configure<ApiBehaviorOptions>(options =>
+{
+    options.InvalidModelStateResponseFactory = context =>
+    {
+        var correlationId = context.HttpContext.Request.Headers["X-Correlation-ID"].FirstOrDefault()
+                            ?? FederationTelemetry.CreateCorrelationId();
+
+        var details = context.ModelState
+            .Where(kvp => kvp.Value?.Errors.Count > 0)
+            .ToDictionary(
+                kvp => kvp.Key,
+                kvp => (string?)string.Join("; ", kvp.Value!.Errors.Select(e => e.ErrorMessage)));
+
+        return ErrorContractMapper.ToActionResult(new FailureDescriptor(
+            "request.validation_failed",
+            FailureCategory.Validation,
+            "One or more validation errors occurred.",
+            correlationId,
+            details));
+    };
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
@@ -76,6 +100,9 @@ builder.Services.AddDbContext<FederationDbContext>(opt =>
     else
         opt.UseSqlite(connStr ?? "Data Source=federation.db",
             x => x.MigrationsAssembly("JellyFederation.Migrations.Sqlite"));
+
+    // Default to no-tracking for all read queries; mutation paths explicitly call .AsTracking().
+    opt.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTrackingWithIdentityResolution);
 });
 
 builder.Services.AddSignalR();
@@ -119,9 +146,26 @@ builder.Services.AddOpenTelemetry()
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    // Trust any upstream proxy — the container is not directly internet-exposed (sits behind Traefik)
-    options.KnownNetworks.Clear();
-    options.KnownProxies.Clear();
+
+    var knownProxies = builder.Configuration
+        .GetSection("ForwardedHeaders:KnownProxies")
+        .Get<string[]>() ?? [];
+
+    if (knownProxies.Length > 0)
+    {
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+
+        foreach (var proxy in knownProxies)
+            if (IPAddress.TryParse(proxy, out var proxyIp))
+                options.KnownProxies.Add(proxyIp);
+    }
+    else if (builder.Environment.IsDevelopment())
+    {
+        // Development convenience for local reverse proxies.
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+    }
 });
 
 builder.Services.AddRateLimiter(options =>
@@ -195,3 +239,5 @@ app.MapHub<FederationHub>("/hubs/federation");
 app.MapFallbackToFile("index.html"); // SPA fallback for client-side routes
 
 app.Run();
+
+public partial class Program;

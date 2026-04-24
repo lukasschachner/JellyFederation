@@ -159,4 +159,22 @@ public partial class FederationHub
     [LoggerMessage(36, LogLevel.Debug,
         "RelayTransferStart forwarded for request {RequestId} to server {TargetServerId}")]
     private static partial void LogRelayTransferStartForwarded(ILogger logger, Guid requestId, Guid targetServerId);
+
+    [LoggerMessage(37, LogLevel.Warning,
+        "{Workflow}: unauthorized participant {ServerId} for request {RequestId} (owner={OwningServerId}, requester={RequestingServerId})")]
+    private static partial void LogHubWorkflowUnauthorizedParticipant(
+        ILogger logger,
+        string workflow,
+        Guid requestId,
+        Guid serverId,
+        Guid owningServerId,
+        Guid requestingServerId);
+
+    [LoggerMessage(38, LogLevel.Warning,
+        "{Workflow}: unknown connection {ConnectionId} for request {RequestId}")]
+    private static partial void LogHubWorkflowUnknownConnection(
+        ILogger logger,
+        string workflow,
+        string connectionId,
+        Guid requestId);
 }

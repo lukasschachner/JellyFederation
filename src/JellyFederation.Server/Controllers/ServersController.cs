@@ -66,6 +66,7 @@ public partial class ServersController : ControllerBase
     public async Task<ActionResult<List<ServerInfoDto>>> List()
     {
         var servers = await _db.Servers
+            .AsNoTracking()
             .Select(s => new ServerInfoDto(
                 s.Id, s.Name, s.OwnerUserId, s.IsOnline, s.LastSeenAt, s.MediaItems.Count))
             .ToListAsync().ConfigureAwait(false);
@@ -78,6 +79,7 @@ public partial class ServersController : ControllerBase
     public async Task<ActionResult<ServerInfoDto>> Get(Guid id)
     {
         var server = await _db.Servers
+            .AsNoTracking()
             .Where(s => s.Id == id)
             .Select(s => new ServerInfoDto(
                 s.Id, s.Name, s.OwnerUserId, s.IsOnline, s.LastSeenAt, s.MediaItems.Count))

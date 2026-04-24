@@ -65,9 +65,11 @@ namespace JellyFederation.Migrations.Sqlite.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("OwningServerId");
+                    b.HasIndex("OwningServerId", "Status");
 
-                    b.HasIndex("RequestingServerId");
+                    b.HasIndex("RequestingServerId", "Status");
+
+                    b.HasIndex("Status", "CreatedAt");
 
                     b.ToTable("FileRequests");
                 });
@@ -95,9 +97,9 @@ namespace JellyFederation.Migrations.Sqlite.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("FromServerId");
+                    b.HasIndex("FromServerId", "Status");
 
-                    b.HasIndex("ToServerId");
+                    b.HasIndex("ToServerId", "Status");
 
                     b.ToTable("Invitations");
                 });

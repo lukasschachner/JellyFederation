@@ -1,23 +1,25 @@
+using System.ComponentModel.DataAnnotations;
 using JellyFederation.Shared.Models;
 
 namespace JellyFederation.Shared.Dtos;
 
-public record CreateFileRequestDto
+public sealed class CreateFileRequestDto
 {
+    public CreateFileRequestDto()
+    {
+    }
+
     public CreateFileRequestDto(string JellyfinItemId, Guid OwningServerId)
     {
         this.JellyfinItemId = JellyfinItemId;
         this.OwningServerId = OwningServerId;
     }
 
-    public string JellyfinItemId { get; init; }
-    public Guid OwningServerId { get; init; }
+    [Required]
+    [StringLength(256, MinimumLength = 1)]
+    public string JellyfinItemId { get; init; } = string.Empty;
 
-    public void Deconstruct(out string JellyfinItemId, out Guid OwningServerId)
-    {
-        JellyfinItemId = this.JellyfinItemId;
-        OwningServerId = this.OwningServerId;
-    }
+    public Guid OwningServerId { get; init; }
 }
 
 public record FileRequestDto

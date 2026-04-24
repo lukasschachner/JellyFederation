@@ -61,25 +61,24 @@ public static class TelemetryRedaction
         string? failureCategory = null,
         string? failureCode = null)
     {
-        var values = new List<KeyValuePair<string, object?>>
-        {
-            new("operation", SafeDimensionValue("operation", operation)),
-            new("component", SafeDimensionValue("component", component))
-        };
+        // Pre-compute the exact array size to avoid List<T> + ToArray() allocation.
+        var count = 2
+                    + (string.IsNullOrWhiteSpace(outcome)        ? 0 : 1)
+                    + (string.IsNullOrWhiteSpace(peerServer)     ? 0 : 1)
+                    + (string.IsNullOrWhiteSpace(release)        ? 0 : 1)
+                    + (string.IsNullOrWhiteSpace(failureCategory) ? 0 : 1)
+                    + (string.IsNullOrWhiteSpace(failureCode)    ? 0 : 1);
 
-        if (!string.IsNullOrWhiteSpace(outcome))
-            values.Add(new KeyValuePair<string, object?>("outcome", SafeDimensionValue("outcome", outcome)));
-        if (!string.IsNullOrWhiteSpace(peerServer))
-            values.Add(new KeyValuePair<string, object?>("peer_server", SafeDimensionValue("peer_server", peerServer)));
-        if (!string.IsNullOrWhiteSpace(release))
-            values.Add(new KeyValuePair<string, object?>("release", SafeDimensionValue("release", release)));
-        if (!string.IsNullOrWhiteSpace(failureCategory))
-            values.Add(new KeyValuePair<string, object?>("failure_category",
-                SafeDimensionValue("failure_category", failureCategory)));
-        if (!string.IsNullOrWhiteSpace(failureCode))
-            values.Add(new KeyValuePair<string, object?>("failure_code", SafeDimensionValue("failure_code", failureCode)));
-
-        return values.ToArray();
+        var tags = new KeyValuePair<string, object?>[count];
+        var i = 0;
+        tags[i++] = new("operation", SafeDimensionValue("operation", operation));
+        tags[i++] = new("component", SafeDimensionValue("component", component));
+        if (!string.IsNullOrWhiteSpace(outcome))        tags[i++] = new("outcome",         SafeDimensionValue("outcome",         outcome));
+        if (!string.IsNullOrWhiteSpace(peerServer))     tags[i++] = new("peer_server",     SafeDimensionValue("peer_server",     peerServer));
+        if (!string.IsNullOrWhiteSpace(release))        tags[i++] = new("release",          SafeDimensionValue("release",         release));
+        if (!string.IsNullOrWhiteSpace(failureCategory)) tags[i++] = new("failure_category", SafeDimensionValue("failure_category", failureCategory));
+        if (!string.IsNullOrWhiteSpace(failureCode))    tags[i]   = new("failure_code",     SafeDimensionValue("failure_code",    failureCode));
+        return tags;
     }
 
     public static Models.FailureDescriptor SanitizeFailureDescriptor(Models.FailureDescriptor failure)

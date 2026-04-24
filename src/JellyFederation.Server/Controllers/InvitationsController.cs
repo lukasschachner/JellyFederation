@@ -33,7 +33,10 @@ public partial class InvitationsController : AuthenticatedController
         var fromServer = CurrentServer;
         LogInvitationSendRequested(_logger, fromServer.Id, request.ToServerId);
 
-        var toServer = await _db.Servers.FindAsync(request.ToServerId).ConfigureAwait(false);
+        var toServer = await _db.Servers
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == request.ToServerId)
+            .ConfigureAwait(false);
         if (toServer is null)
         {
             LogInvitationTargetNotFound(_logger, fromServer.Id, request.ToServerId);
@@ -76,14 +79,20 @@ public partial class InvitationsController : AuthenticatedController
         var server = CurrentServer;
 
         var invitations = await _db.Invitations
-            .Include(i => i.FromServer)
-            .Include(i => i.ToServer)
+            .AsNoTracking()
             .Where(i => i.FromServerId == server.Id || i.ToServerId == server.Id)
+            .Select(i => new InvitationDto(
+                i.Id,
+                i.FromServerId,
+                i.FromServer.Name,
+                i.ToServerId,
+                i.ToServer.Name,
+                i.Status,
+                i.CreatedAt))
             .ToListAsync().ConfigureAwait(false);
         LogInvitationListReturned(_logger, server.Id, invitations.Count);
 
-        return Ok(invitations.Select(i =>
-            ToDto(i, i.FromServer.Name, i.ToServer.Name)));
+        return Ok(invitations);
     }
 
     [HttpPut("{id}/respond")]
@@ -93,7 +102,9 @@ public partial class InvitationsController : AuthenticatedController
     {
         var server = CurrentServer;
 
+        // AsTracking required — invitation.Status is mutated and saved below.
         var invitation = await _db.Invitations
+            .AsTracking()
             .Include(i => i.FromServer)
             .Include(i => i.ToServer)
             .FirstOrDefaultAsync(i => i.Id == id && i.ToServerId == server.Id).ConfigureAwait(false);
@@ -129,7 +140,9 @@ public partial class InvitationsController : AuthenticatedController
     {
         var server = CurrentServer;
 
+        // AsTracking required — invitation.Status is mutated and saved below.
         var invitation = await _db.Invitations
+            .AsTracking()
             .FirstOrDefaultAsync(i => i.Id == id && i.FromServerId == server.Id).ConfigureAwait(false);
 
         if (invitation is null)

@@ -1,21 +1,26 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace JellyFederation.Shared.Dtos;
 
-public record RegisterServerRequest
+public sealed class RegisterServerRequest
 {
+    public RegisterServerRequest()
+    {
+    }
+
     public RegisterServerRequest(string Name, string OwnerUserId)
     {
         this.Name = Name;
         this.OwnerUserId = OwnerUserId;
     }
 
-    public string Name { get; init; }
-    public string OwnerUserId { get; init; }
+    [Required]
+    [StringLength(128, MinimumLength = 1)]
+    public string Name { get; init; } = string.Empty;
 
-    public void Deconstruct(out string Name, out string OwnerUserId)
-    {
-        Name = this.Name;
-        OwnerUserId = this.OwnerUserId;
-    }
+    [Required]
+    [StringLength(128, MinimumLength = 1)]
+    public string OwnerUserId { get; init; } = string.Empty;
 }
 
 public record RegisterServerResponse
