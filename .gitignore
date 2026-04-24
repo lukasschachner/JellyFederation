@@ -28,3 +28,6 @@ src/JellyFederation.Server/federation.db
 src/JellyFederation.Server/federation.db-shm
 src/JellyFederation.Server/federation.db-wal
 src/JellyFederation.Server/wwwroot/
+docs/_site/
+docs/api/**
+!docs/api/index.md

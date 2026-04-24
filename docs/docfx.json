@@ -1,0 +1,82 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/docfx/main/schemas/docfx.schema.json",
+  "metadata": [
+    {
+      "src": [
+        {
+          "src": "../src",
+          "files": [
+            "JellyFederation.Shared/JellyFederation.Shared.csproj"
+          ]
+        }
+      ],
+      "output": "api"
+    },
+    {
+      "src": [
+        {
+          "src": "../src",
+          "files": [
+            "JellyFederation.Data/JellyFederation.Data.csproj"
+          ]
+        }
+      ],
+      "output": "api"
+    },
+    {
+      "src": [
+        {
+          "src": "../src",
+          "files": [
+            "JellyFederation.Server/JellyFederation.Server.csproj"
+          ]
+        }
+      ],
+      "output": "api"
+    },
+    {
+      "src": [
+        {
+          "src": "../src",
+          "files": [
+            "JellyFederation.Plugin/JellyFederation.Plugin.csproj"
+          ]
+        }
+      ],
+      "output": "api"
+    }
+  ],
+  "build": {
+    "content": [
+      {
+        "files": [
+          "index.md",
+          "toc.yml",
+          "articles/**/*.md",
+          "api/**/*.yml",
+          "api/**/*.md"
+        ]
+      }
+    ],
+    "resource": [
+      {
+        "files": [
+          "images/**",
+          "styles/**"
+        ]
+      }
+    ],
+    "output": "_site",
+    "template": [
+      "default",
+      "modern"
+    ],
+    "globalMetadata": {
+      "_appName": "JellyFederation",
+      "_appTitle": "JellyFederation Documentation",
+      "_appFooter": "JellyFederation",
+      "_enableSearch": true
+    },
+    "markdownEngineName": "markdig"
+  }
+}

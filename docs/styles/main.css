@@ -1,0 +1,15 @@
+/* Minimal visual polish without custom template complexity */
+
+article.content h1 {
+  border-bottom: 1px solid #e5e7eb;
+  padding-bottom: 0.4rem;
+}
+
+article.content p,
+article.content li {
+  line-height: 1.65;
+}
+
+.navbar-brand {
+  font-weight: 600;
+}
