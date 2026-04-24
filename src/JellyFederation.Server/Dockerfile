@@ -8,6 +8,7 @@ RUN npm run build
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
+COPY Directory.Packages.props ./
 COPY src/JellyFederation.Shared/JellyFederation.Shared.csproj src/JellyFederation.Shared/
 COPY src/JellyFederation.Data/JellyFederation.Data.csproj src/JellyFederation.Data/
 COPY src/JellyFederation.Migrations.Sqlite/JellyFederation.Migrations.Sqlite.csproj src/JellyFederation.Migrations.Sqlite/
