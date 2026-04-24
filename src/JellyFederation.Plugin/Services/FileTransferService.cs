@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Quic;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Runtime.Versioning;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -43,6 +44,19 @@ public partial class FileTransferService
     private const long QuicDefaultCloseErrorCode = 0x0B;
     private static readonly SslApplicationProtocol QuicAlpn = new("jellyfederation-transfer/1");
     private static readonly byte[] EofMagic = "JFEOF"u8.ToArray();
+
+    private static bool IsQuicAvailable()
+    {
+        return IsQuicSupportedPlatform() && QuicConnection.IsSupported;
+    }
+
+    [SupportedOSPlatformGuard("linux")]
+    [SupportedOSPlatformGuard("macos")]
+    [SupportedOSPlatformGuard("windows")]
+    private static bool IsQuicSupportedPlatform()
+    {
+        return OperatingSystem.IsLinux() || OperatingSystem.IsMacOS() || OperatingSystem.IsWindows();
+    }
 
     // Active transfer cancellation tokens keyed by fileRequestId
     private readonly ConcurrentDictionary<Guid, CancellationTokenSource>
@@ -128,7 +142,7 @@ public partial class FileTransferService
         var effectiveMode = selectedMode;
         var effectiveReason = selectionReason;
         if (selectedMode == TransferTransportMode.Quic &&
-            (!config.PreferQuicForLargeFiles || !QuicConnection.IsSupported))
+            (!config.PreferQuicForLargeFiles || !IsQuicAvailable()))
         {
             effectiveMode = TransferTransportMode.ArqUdp;
             effectiveReason = config.PreferQuicForLargeFiles
@@ -262,7 +276,7 @@ public partial class FileTransferService
         var effectiveMode = selectedMode;
         var effectiveReason = selectionReason;
         if (selectedMode == TransferTransportMode.Quic &&
-            (!config.PreferQuicForLargeFiles || !QuicConnection.IsSupported))
+            (!config.PreferQuicForLargeFiles || !IsQuicAvailable()))
         {
             effectiveMode = TransferTransportMode.ArqUdp;
             effectiveReason = config.PreferQuicForLargeFiles
@@ -507,6 +521,12 @@ public partial class FileTransferService
         IPEndPoint remoteEp,
         CancellationToken ct)
     {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS() && !OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("QUIC is only supported on Linux, macOS, and Windows.");
+
+        if (!QuicConnection.IsSupported)
+            throw new PlatformNotSupportedException("QUIC is not supported by the current runtime or host configuration.");
+
         var connection = await QuicConnection.ConnectAsync(new QuicClientConnectionOptions
         {
             RemoteEndPoint = remoteEp,
@@ -551,6 +571,12 @@ public partial class FileTransferService
         CancellationToken ct,
         string correlationId)
     {
+        if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS() && !OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("QUIC is only supported on Linux, macOS, and Windows.");
+
+        if (!QuicConnection.IsSupported)
+            throw new PlatformNotSupportedException("QUIC is not supported by the current runtime or host configuration.");
+
         var localPort = ((IPEndPoint)holePunchSocket.LocalEndPoint!).Port;
         holePunchSocket.Dispose();
 
@@ -568,18 +594,23 @@ public partial class FileTransferService
                 ApplicationProtocols = [QuicAlpn],
                 ConnectionOptionsCallback = (_, _, _) =>
                 {
-                    var options = new QuicServerConnectionOptions
+                    if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS() || OperatingSystem.IsWindows())
                     {
-                        DefaultStreamErrorCode = QuicDefaultStreamErrorCode,
-                        DefaultCloseErrorCode = QuicDefaultCloseErrorCode,
-                        ServerAuthenticationOptions = new SslServerAuthenticationOptions
+                        var options = new QuicServerConnectionOptions
                         {
-                            EnabledSslProtocols = SslProtocols.Tls13,
-                            ApplicationProtocols = [QuicAlpn],
-                            ServerCertificate = serverCert
-                        }
-                    };
-                    return ValueTask.FromResult(options);
+                            DefaultStreamErrorCode = QuicDefaultStreamErrorCode,
+                            DefaultCloseErrorCode = QuicDefaultCloseErrorCode,
+                            ServerAuthenticationOptions = new SslServerAuthenticationOptions
+                            {
+                                EnabledSslProtocols = SslProtocols.Tls13,
+                                ApplicationProtocols = [QuicAlpn],
+                                ServerCertificate = serverCert
+                            }
+                        };
+                        return ValueTask.FromResult(options);
+                    }
+
+                    throw new PlatformNotSupportedException("QUIC is only supported on Linux, macOS, and Windows.");
                 }
             }).ConfigureAwait(false);
 
