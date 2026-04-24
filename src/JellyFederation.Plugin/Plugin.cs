@@ -35,6 +35,11 @@ public class FederationPlugin : BasePlugin<PluginConfiguration>, IHasWebPages, I
             {
                 Name = Name,
                 EmbeddedResourcePath = $"{GetType().Namespace}.Web.configurationpage.html"
+            },
+            new PluginPageInfo
+            {
+                Name = "jellyfederation.js",
+                EmbeddedResourcePath = $"{GetType().Namespace}.Web.configurationpage.js"
             }
         ];
     }

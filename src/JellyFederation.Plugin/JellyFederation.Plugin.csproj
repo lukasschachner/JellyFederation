@@ -40,6 +40,7 @@
 
     <ItemGroup>
         <EmbeddedResource Include="Web\configurationpage.html"/>
+        <EmbeddedResource Include="Web\configurationpage.js"/>
     </ItemGroup>
 
     <!--
