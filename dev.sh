@@ -7,14 +7,15 @@ DATA_DIR="/tmp/jellyfin-dev"
 CONTAINER="jellyfin-dev"
 PORT=8097
 PLUGIN_ID="a1b2c3d4-e5f6-7890-abcd-ef1234567890"
-PLUGIN_DIR="$DATA_DIR/config/plugins/JellyFederation_1.0.0.0"
+PLUGIN_VERSION="$(awk -F'"' '/^version:/{print $2; exit}' "$REPO_DIR/build.yaml")"
+PLUGIN_DIR="$DATA_DIR/config/plugins/JellyFederation_${PLUGIN_VERSION}"
 SERVER_PID_FILE="/tmp/jf-server.pid"
 SERVER_LOG="/tmp/jf-server.log"
 FEDERATION_PORT=5264
 COMPOSE_FILE="$REPO_DIR/docker-compose.yml"
 TEST_HOST_DEFAULT="192.168.2.192"
 TEST_USER_DEFAULT="root"
-TEST_PLUGIN_DIR="/opt/media/jellyfin/plugins/JellyFederation_1.0.0.0"
+TEST_PLUGIN_DIR="/opt/media/jellyfin/plugins/JellyFederation_${PLUGIN_VERSION}"
 TEST_COMPOSE_DIR="/opt/media/jellyfin"
 
 # ── colours ──────────────────────────────────────────────────────────────────
@@ -66,7 +67,7 @@ ensure_msquic_runtime_asset() {
 }
 
 ensure_local_container_msquic() {
-    local src="/config/plugins/JellyFederation_1.0.0.0/runtimes/linux-x64/native/libmsquic.so"
+    local src="/config/plugins/JellyFederation_${PLUGIN_VERSION}/runtimes/linux-x64/native/libmsquic.so"
     local lib_dir="/usr/lib/x86_64-linux-gnu"
 
     if ! container_running; then
@@ -114,12 +115,12 @@ install_plugin() {
         rm -rf "$PLUGIN_DIR"/* 2>/dev/null || true
         cp -a /tmp/jf-plugin/. "$PLUGIN_DIR/"
         cat > "$PLUGIN_DIR/meta.json" << EOF
-{"Id":"$PLUGIN_ID","Name":"JellyFederation","Version":"1.0.0.0","Status":"Active"}
+{"Id":"$PLUGIN_ID","Name":"JellyFederation","Version":"$PLUGIN_VERSION","Status":"Active"}
 EOF
     else
         sudo rm -rf "$PLUGIN_DIR"/* 2>/dev/null || true
         sudo cp -a /tmp/jf-plugin/. "$PLUGIN_DIR/"
-        printf '{"Id":"%s","Name":"JellyFederation","Version":"1.0.0.0","Status":"Active"}\n' "$PLUGIN_ID" \
+        printf '{"Id":"%s","Name":"JellyFederation","Version":"%s","Status":"Active"}\n' "$PLUGIN_ID" "$PLUGIN_VERSION" \
             | sudo tee "$PLUGIN_DIR/meta.json" >/dev/null
     fi
 
@@ -279,7 +280,7 @@ deploy_remote_from_tmp() {
     ssh "${test_user}@${test_host}" "mkdir -p '${TEST_PLUGIN_DIR}'"
     ssh "${test_user}@${test_host}" "rm -rf '${TEST_PLUGIN_DIR}'/* 2>/dev/null || true"
     tar -C /tmp/jf-plugin -cf - . | ssh "${test_user}@${test_host}" "tar -C '${TEST_PLUGIN_DIR}' -xf -"
-    ssh "${test_user}@${test_host}" "printf '{\"Id\":\"%s\",\"Name\":\"JellyFederation\",\"Version\":\"1.0.0.0\",\"Status\":\"Active\"}\n' '${PLUGIN_ID}' > '${TEST_PLUGIN_DIR}/meta.json'"
+    ssh "${test_user}@${test_host}" "printf '{\"Id\":\"%s\",\"Name\":\"JellyFederation\",\"Version\":\"%s\",\"Status\":\"Active\"}\n' '${PLUGIN_ID}' '${PLUGIN_VERSION}' > '${TEST_PLUGIN_DIR}/meta.json'"
     ok "Plugin artifacts deployed to $test_host"
     info "Restarting remote Jellyfin on $test_host…"
     ssh "${test_user}@${test_host}" "cd '${TEST_COMPOSE_DIR}' && docker compose restart jellyfin"
