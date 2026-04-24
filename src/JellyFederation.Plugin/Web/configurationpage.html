@@ -102,6 +102,42 @@
                 </div>
 
                 <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="turnServer">
+                        TURN Server (optional)
+                    </label>
+                    <input id="turnServer" is="emby-input"
+                           name="TurnServer" placeholder="turn:turn.example.com:3478"
+                           type="text"/>
+                    <div class="fieldDescription">
+                        Optional TURN relay for WebRTC ICE when STUN-only direct connectivity is blocked by symmetric NATs or strict firewalls.
+                    </div>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="turnUsername">
+                        TURN Username (optional)
+                    </label>
+                    <input id="turnUsername" is="emby-input"
+                           name="TurnUsername" placeholder="username"
+                           type="text"/>
+                    <div class="fieldDescription">
+                        Username for the TURN server, if required.
+                    </div>
+                </div>
+
+                <div class="inputContainer">
+                    <label class="inputLabel inputLabelUnfocused" for="turnCredential">
+                        TURN Credential (optional)
+                    </label>
+                    <input id="turnCredential" is="emby-input"
+                           name="TurnCredential" placeholder="password"
+                           type="password"/>
+                    <div class="fieldDescription">
+                        Password or credential for the TURN server, if required.
+                    </div>
+                </div>
+
+                <div class="inputContainer">
                     <label class="inputLabel inputLabelUnfocused" for="overridePublicIp">
                         Override Public IP <span style="font-weight:normal;opacity:0.7">(optional — only needed for old plugin versions)</span>
                     </label>

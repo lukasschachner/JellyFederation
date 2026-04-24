@@ -415,12 +415,24 @@ public partial class WebRtcTransportService
             ? "stun.l.google.com:19302"
             : config.StunServer;
 
+        var iceServers = new List<RTCIceServer>
+        {
+            new() { urls = $"stun:{stunServer}" }
+        };
+
+        if (!string.IsNullOrWhiteSpace(config.TurnServer))
+        {
+            iceServers.Add(new RTCIceServer
+            {
+                urls = config.TurnServer,
+                username = string.IsNullOrWhiteSpace(config.TurnUsername) ? null : config.TurnUsername,
+                credential = string.IsNullOrWhiteSpace(config.TurnCredential) ? null : config.TurnCredential
+            });
+        }
+
         var configuration = new RTCConfiguration
         {
-            iceServers =
-            [
-                new RTCIceServer { urls = $"stun:{stunServer}" }
-            ]
+            iceServers = iceServers
         };
 
         var pc = new RTCPeerConnection(configuration);

@@ -93,6 +93,9 @@
             setInputValue(page, '#publicJellyfinUrl', config.PublicJellyfinUrl);
             setInputValue(page, '#downloadDirectory', config.DownloadDirectory);
             setInputValue(page, '#stunServer', config.StunServer);
+            setInputValue(page, '#turnServer', config.TurnServer);
+            setInputValue(page, '#turnUsername', config.TurnUsername);
+            setInputValue(page, '#turnCredential', config.TurnCredential);
             setInputValue(page, '#overridePublicIp', config.OverridePublicIp);
             setInputValue(page, '#holePunchPort', config.HolePunchPort || defaultHolePunchPort);
             setChecked(page, '#preferQuicForLargeFiles', config.PreferQuicForLargeFiles !== false);
@@ -123,6 +126,9 @@
             config.PublicJellyfinUrl = getTrimmedValue(form, '#publicJellyfinUrl');
             config.DownloadDirectory = getTrimmedValue(form, '#downloadDirectory');
             config.StunServer = getTrimmedValue(form, '#stunServer');
+            config.TurnServer = getTrimmedValue(form, '#turnServer');
+            config.TurnUsername = getTrimmedValue(form, '#turnUsername');
+            config.TurnCredential = getTrimmedValue(form, '#turnCredential');
             config.OverridePublicIp = getTrimmedValue(form, '#overridePublicIp');
             config.HolePunchPort = parseNonNegativeInt(getTrimmedValue(form, '#holePunchPort'), defaultHolePunchPort);
 

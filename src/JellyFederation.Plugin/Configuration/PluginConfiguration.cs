@@ -53,6 +53,22 @@ public class PluginConfiguration : BasePluginConfiguration
     /// </summary>
     public string StunServer { get; set; } = "stun.l.google.com:19302";
 
+    /// <summary>
+    ///     Optional TURN server URL used when STUN-only direct connectivity is blocked.
+    ///     Example: turn:turn.example.com:3478 or turns:turn.example.com:5349.
+    /// </summary>
+    public string TurnServer { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     Optional username for the configured TURN server.
+    /// </summary>
+    public string TurnUsername { get; set; } = string.Empty;
+
+    /// <summary>
+    ///     Optional credential/password for the configured TURN server.
+    /// </summary>
+    public string TurnCredential { get; set; } = string.Empty;
+
     public string TelemetryServiceName { get; set; } = "jellyfederation-plugin";
     public string TelemetryOtlpEndpoint { get; set; } = "http://localhost:4317";
     public double TelemetrySamplingRatio { get; set; } = 1.0;
