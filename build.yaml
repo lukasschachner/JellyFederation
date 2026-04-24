@@ -1,7 +1,7 @@
 ---
 name: "JellyFederation"
 guid: "e5c0cda1-805e-41e2-9654-e17143dc31a1"
-version: "1.1.1.0"
+version: "1.2.0.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "lukasschachner"
@@ -12,4 +12,6 @@ artifacts:
   - "JellyFederation.Plugin.dll"
   - "JellyFederation.Shared.dll"
 changelog: |-
-  - Initial plugin packaging manifest.
+  - Harden WebRTC signaling, DataChannel framing, backpressure, and relay fallback.
+  - Add optional TURN server configuration for restrictive NAT/firewall environments.
+  - Add plugin-side WebRTC component coverage and streaming range design notes.
