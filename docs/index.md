@@ -12,6 +12,7 @@ JellyFederation is a Jellyfin plugin and companion server for federated media di
 
 - [Getting started](articles/getting-started.md)
 - [Architecture](articles/architecture.md)
+- [Testing strategy](testing/01-api-integration-tests.md)
 - [API reference](api/index.md)
 
 ## Local docs commands

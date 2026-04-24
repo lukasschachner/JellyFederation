@@ -4,5 +4,21 @@
   href: articles/getting-started.md
 - name: Architecture
   href: articles/architecture.md
+- name: Testing Strategy
+  items:
+    - name: API Integration Tests
+      href: testing/01-api-integration-tests.md
+    - name: PostgreSQL Testcontainers
+      href: testing/02-postgresql-testcontainers.md
+    - name: Contract Validation Tests
+      href: testing/03-contract-validation-tests.md
+    - name: EF Core Query Tests
+      href: testing/04-efcore-query-tests.md
+    - name: Plugin Component Tests
+      href: testing/05-plugin-component-tests.md
+    - name: SignalR Workflow Tests
+      href: testing/06-signalr-workflow-tests.md
+    - name: Quality Gates
+      href: testing/07-quality-gates.md
 - name: API Reference
   href: api/index.md
