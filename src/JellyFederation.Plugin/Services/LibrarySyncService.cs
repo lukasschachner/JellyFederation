@@ -34,6 +34,17 @@ public partial class LibrarySyncService
 
     // Cache PropertyInfo lookups per type to avoid repeated reflection on large libraries
     private static readonly ConcurrentDictionary<(Type, string), PropertyInfo?> PropertyCache = new();
+
+    // Cache the Audio type by scanning loaded assemblies once at startup so per-item sync
+    // can do a fast reference comparison instead of a string comparison on every item.
+    private static readonly Type? AudioType =
+        AppDomain.CurrentDomain.GetAssemblies()
+            .Select(a =>
+            {
+                try { return a.GetType("MediaBrowser.Controller.Entities.Audio.Audio"); }
+                catch { return null; }
+            })
+            .FirstOrDefault(t => t is not null);
     private readonly HttpClient _http;
     private readonly ILibraryManager _libraryManager;
     private readonly ILogger<LibrarySyncService> _logger;
@@ -174,10 +185,12 @@ public partial class LibrarySyncService
         }
     }
 
-    private static bool IsAudioItem(BaseItem item)
-    {
-        return item.GetType().Name == "Audio";
-    }
+    // Reference comparison is faster than string equality; falls back to name check if type
+    // is not found in loaded assemblies (should not happen in a real Jellyfin host).
+    private static bool IsAudioItem(BaseItem item) =>
+        AudioType is not null
+            ? item.GetType() == AudioType
+            : item.GetType().Name == "Audio";
 
     private static MediaType MapType(BaseItem item)
     {
@@ -353,6 +366,9 @@ public partial class LibrarySyncService
     private static byte[]? TryCreateCompressedPreview(string imagePath, int maxBytes)
     {
         using var sourceImage = Image.Load(imagePath);
+        // Reuse a single MemoryStream across all width/quality attempts (up to 16 iterations)
+        // by resetting its length instead of allocating a new stream each time.
+        using var ms = new MemoryStream(MaxEmbeddedPreviewBytesPerImage);
 
         foreach (var width in PreviewWidths)
         {
@@ -364,7 +380,7 @@ public partial class LibrarySyncService
 
             foreach (var quality in PreviewJpegQualities)
             {
-                using var ms = new MemoryStream();
+                ms.SetLength(0);
                 resized.SaveAsJpeg(ms, new JpegEncoder { Quality = quality });
                 if (ms.Length > 0 && ms.Length <= maxBytes)
                     return ms.ToArray();

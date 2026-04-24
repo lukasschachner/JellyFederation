@@ -103,7 +103,7 @@ public sealed class LocalStreamEndpoint : IAsyncDisposable
         }
         catch (OperationCanceledException)
         {
-            // Client disconnected — normal for streaming
+            _logger.LogDebug("Streaming client disconnected for token {Token}", token);
         }
         finally
         {

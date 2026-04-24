@@ -317,12 +317,14 @@ public partial class FileTransferService
 
         try
         {
+            // Create the linked CTS once outside the loop. timeoutCts.CancelAfter() inside the loop
+            // reschedules the deadline each time a packet arrives; when it fires, linkedCts.Token
+            // propagates the cancellation and ReceiveAsync throws. No per-packet allocation needed.
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                transferCts.Token, timeoutCts.Token);
             while (true)
             {
-                // Reset the timeout for each packet instead of allocating a new CTS
                 timeoutCts.CancelAfter(30_000);
-                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
-                    transferCts.Token, timeoutCts.Token);
                 int received;
                 try
                 {
@@ -690,9 +692,11 @@ public partial class FileTransferService
 
     private static async Task WriteInt32Async(Stream stream, int value, CancellationToken ct)
     {
-        Span<byte> bytes = stackalloc byte[4];
+        // Allocate directly on the heap — stackalloc+ToArray() was paying the stack write AND
+        // a heap copy, which is strictly worse than a single heap allocation.
+        var bytes = new byte[4];
         BitConverter.TryWriteBytes(bytes, value);
-        await stream.WriteAsync(bytes.ToArray(), ct).ConfigureAwait(false);
+        await stream.WriteAsync(bytes, ct).ConfigureAwait(false);
     }
 
     private static async Task<int> ReadInt32Async(Stream stream, CancellationToken ct)

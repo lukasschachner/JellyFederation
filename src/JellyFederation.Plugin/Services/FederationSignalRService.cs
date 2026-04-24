@@ -114,31 +114,34 @@ public partial class FederationSignalRService : IAsyncDisposable
             _webRtc.Cancel(msg.FileRequestId);
         });
 
-        _connection.On<IceNegotiateStart>("IceNegotiateStart", async msg =>
+        _connection.On<IceNegotiateStart>("IceNegotiateStart", msg =>
         {
             LogIceNegotiateStart(_logger, msg.FileRequestId, msg.Role.ToString());
-            var cfg = _configProvider.GetConfiguration();
-            try
+            _ = Task.Run(async () =>
             {
-                if (msg.Role == IceRole.Offerer)
+                var cfg = _configProvider.GetConfiguration();
+                try
                 {
-                    // Sender side: we need the jellyfinItemId — retrieve it from the pending sockets dict
-                    // via HolePunchService (which stored it during PrepareAndSignalReadyAsync).
-                    // Fall back to empty string if not found; BeginAsOffererAsync will log the resolution error.
-                    var jellyfinItemId = _holePunch.GetPendingJellyfinItemId(msg.FileRequestId) ?? string.Empty;
-                    await _webRtc.BeginAsOffererAsync(msg.FileRequestId, jellyfinItemId, _connection!, cfg)
-                        .ConfigureAwait(false);
+                    if (msg.Role == IceRole.Offerer)
+                    {
+                        // Sender side: we need the jellyfinItemId — retrieve it from the pending sockets dict
+                        // via HolePunchService (which stored it during PrepareAndSignalReadyAsync).
+                        // Fall back to empty string if not found; BeginAsOffererAsync will log the resolution error.
+                        var jellyfinItemId = _holePunch.GetPendingJellyfinItemId(msg.FileRequestId) ?? string.Empty;
+                        await _webRtc.BeginAsOffererAsync(msg.FileRequestId, jellyfinItemId, _connection!, cfg)
+                            .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await _webRtc.BeginAsAnswererAsync(msg.FileRequestId, _connection!, cfg)
+                            .ConfigureAwait(false);
+                    }
                 }
-                else
+                catch (Exception ex)
                 {
-                    await _webRtc.BeginAsAnswererAsync(msg.FileRequestId, _connection!, cfg)
-                        .ConfigureAwait(false);
+                    LogIceNegotiateStartFailed(_logger, ex, msg.FileRequestId);
                 }
-            }
-            catch (Exception ex)
-            {
-                LogIceNegotiateStartFailed(_logger, ex, msg.FileRequestId);
-            }
+            });
         });
 
         _connection.On<IceSignal>("IceSignal", msg =>
@@ -153,17 +156,20 @@ public partial class FederationSignalRService : IAsyncDisposable
             _webRtc.EnqueueRelayChunk(msg);
         });
 
-        _connection.On<RelayTransferStart>("RelayTransferStart", async msg =>
+        _connection.On<RelayTransferStart>("RelayTransferStart", msg =>
         {
             LogRelayTransferStartReceived(_logger, msg.FileRequestId);
-            try
+            _ = Task.Run(async () =>
             {
-                await _webRtc.StartRelayReceiveModeAsync(msg, _connection!).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                LogRelayTransferStartFailed(_logger, ex, msg.FileRequestId);
-            }
+                try
+                {
+                    await _webRtc.StartRelayReceiveModeAsync(msg, _connection!).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    LogRelayTransferStartFailed(_logger, ex, msg.FileRequestId);
+                }
+            });
         });
 
         _connection.Reconnecting += _ =>

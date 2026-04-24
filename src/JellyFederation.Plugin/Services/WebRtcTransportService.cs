@@ -438,8 +438,23 @@ public partial class WebRtcTransportService
     {
         if (_sessions.TryRemove(fileRequestId, out var session))
         {
-            try { session.Cts.Cancel(); } catch { /* already cancelled */ }
-            try { session.PeerConnection.Close("cleanup"); } catch { /* already closed */ }
+            try
+            {
+                session.Cts.Cancel();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogTrace(ex, "ICE session cancellation skipped for {FileRequestId}", fileRequestId);
+            }
+
+            try
+            {
+                session.PeerConnection.Close("cleanup");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogTrace(ex, "ICE peer connection already closed for {FileRequestId}", fileRequestId);
+            }
             LogSessionCleaned(_logger, fileRequestId);
         }
     }

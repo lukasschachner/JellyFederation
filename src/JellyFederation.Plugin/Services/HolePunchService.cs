@@ -206,6 +206,7 @@ public partial class HolePunchService
             }
             catch (OperationCanceledException)
             {
+                _logger.LogDebug("Probe loop cancelled for request {FileRequestId}", request.FileRequestId);
             }
 
             LogHolePunchSuccess(_logger, remoteEp);
@@ -327,7 +328,7 @@ public partial class HolePunchService
         }
     }
 
-    private static async Task SendProbesAsync(
+    private async Task SendProbesAsync(
         Socket socket, IPEndPoint remote, byte[] probe, CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
@@ -336,9 +337,12 @@ public partial class HolePunchService
             {
                 await socket.SendToAsync(probe, SocketFlags.None, remote, ct).ConfigureAwait(false);
             }
-            catch (SocketException)
+            catch (SocketException ex)
             {
-                /* remote not yet reachable — keep trying */
+                _logger.LogTrace(
+                    "Probe send failed to {RemoteEndpoint} with {SocketError}; retrying",
+                    remote,
+                    ex.SocketErrorCode);
             }
 
             await Task.Delay(ProbeIntervalMs, ct).ConfigureAwait(false);
