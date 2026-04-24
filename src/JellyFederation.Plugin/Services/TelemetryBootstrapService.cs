@@ -6,6 +6,8 @@ namespace JellyFederation.Plugin.Services;
 
 /// <summary>
 ///     Logs telemetry configuration at startup.
+///     The plugin intentionally does not wire OpenTelemetry exporters because Jellyfin hosts
+///     plugins in-process and package version mismatches can prevent plugin startup.
 /// </summary>
 public sealed class TelemetryBootstrapService : IHostedService
 {

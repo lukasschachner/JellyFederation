@@ -24,8 +24,9 @@ using SIPSorcery.Net;
 namespace JellyFederation.Plugin.Services;
 
 /// <summary>
-///     Transfers files over the UDP-hole-punched socket.
-///     Protocol (simple length-prefixed framing over UDP bursts):
+///     Transfers files over the selected peer-to-peer transport.
+///     Supports WebRTC data channels, QUIC, and UDP-hole-punched ARQ fallback.
+///     ARQ protocol (simple length-prefixed framing over UDP bursts):
 ///     Sender → Receiver:
 ///     1. HEADER frame: JSON { FileName, FileSize }
 ///     2. DATA frames: [4-byte seq][chunk bytes]
@@ -74,8 +75,9 @@ public partial class FileTransferService
     private readonly ILogger<FileTransferService> _logger;
 
     /// <summary>
-    ///     Transfers files over the UDP-hole-punched socket.
-    ///     Protocol (simple length-prefixed framing over UDP bursts):
+    ///     Transfers files over the selected peer-to-peer transport.
+    ///     Supports WebRTC data channels, QUIC, and UDP-hole-punched ARQ fallback.
+    ///     ARQ protocol (simple length-prefixed framing over UDP bursts):
     ///     Sender → Receiver:
     ///     1. HEADER frame: JSON { FileName, FileSize }
     ///     2. DATA frames: [4-byte seq][chunk bytes]

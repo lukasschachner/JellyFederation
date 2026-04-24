@@ -29,6 +29,7 @@ public class PluginServiceRegistrator : IPluginServiceRegistrator
         // avoiding socket exhaustion from a long-lived singleton HttpClient.
         services.AddHttpClient<FileTransferService>();
         services.AddSingleton<FederationSignalRService>();
+        services.AddHostedService<TelemetryBootstrapService>();
         services.AddHostedService<FederationStartupService>();
     }
 }

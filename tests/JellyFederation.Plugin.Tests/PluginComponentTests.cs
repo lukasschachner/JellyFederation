@@ -7,6 +7,18 @@ namespace JellyFederation.Plugin.Tests;
 
 public sealed class PluginComponentTests
 {
+    private static string RepoRoot
+    {
+        get
+        {
+            var directory = new DirectoryInfo(AppContext.BaseDirectory);
+            while (directory is not null && !File.Exists(Path.Combine(directory.FullName, "dev.sh")))
+                directory = directory.Parent;
+
+            return directory?.FullName ?? throw new DirectoryNotFoundException("Could not locate repository root.");
+        }
+    }
+
     [Fact]
     public void TelemetryRedaction_RedactsSensitiveValues_AndTruncatesNonSensitiveValues()
     {
@@ -61,6 +73,80 @@ public sealed class PluginComponentTests
         Assert.Equal(64, Assert.IsType<string>(tags.Single(t => t.Key == "peer_server").Value).Length);
     }
 
+
+    [Fact]
+    public void DevScript_PluginId_MatchesPluginGuid()
+    {
+        var devScript = File.ReadAllText(Path.Combine(RepoRoot, "dev.sh"));
+        var pluginSource = File.ReadAllText(Path.Combine(
+            RepoRoot,
+            "src",
+            "JellyFederation.Plugin",
+            "Plugin.cs"));
+
+        const string pluginGuid = "e5c0cda1-805e-41e2-9654-e17143dc31a1";
+        Assert.Contains($"PluginGuid = new(\"{pluginGuid}\")", pluginSource);
+        Assert.Contains($"PLUGIN_ID=\"{pluginGuid}\"", devScript);
+        Assert.DoesNotContain("a1b2c3d4-e5f6-7890-abcd-ef1234567890", devScript);
+    }
+
+    [Fact]
+    public void PluginConfigurationPage_ReferencesAllPersistedFields()
+    {
+        var html = File.ReadAllText(Path.Combine(
+            RepoRoot,
+            "src",
+            "JellyFederation.Plugin",
+            "Web",
+            "configurationpage.html"));
+        var javascript = File.ReadAllText(Path.Combine(
+            RepoRoot,
+            "src",
+            "JellyFederation.Plugin",
+            "Web",
+            "configurationpage.js"));
+
+        Assert.Contains("configurationpage?name=jellyfederation.js", html);
+
+        string[] fieldIds =
+        [
+            "federationServerUrl",
+            "serverId",
+            "apiKey",
+            "serverName",
+            "publicJellyfinUrl",
+            "downloadDirectory",
+            "stunServer",
+            "overridePublicIp",
+            "holePunchPort",
+            "preferQuicForLargeFiles",
+            "largeFileQuicThresholdBytes"
+        ];
+
+        foreach (var fieldId in fieldIds)
+        {
+            Assert.Contains($"id=\"{fieldId}\"", html);
+            Assert.Contains($"#{fieldId}", javascript);
+        }
+    }
+
+    [Fact]
+    public void PluginTelemetryBootstrap_IsRegisteredWithoutOpenTelemetryExporterPackages()
+    {
+        var registrator = File.ReadAllText(Path.Combine(
+            RepoRoot,
+            "src",
+            "JellyFederation.Plugin",
+            "PluginServiceRegistrator.cs"));
+        var pluginProject = File.ReadAllText(Path.Combine(
+            RepoRoot,
+            "src",
+            "JellyFederation.Plugin",
+            "JellyFederation.Plugin.csproj"));
+
+        Assert.Contains("AddHostedService<TelemetryBootstrapService>", registrator);
+        Assert.DoesNotContain("OpenTelemetry", pluginProject);
+    }
 
     [Fact]
     public void PluginConfiguration_Defaults_AreSafeForInitialConfiguration()
