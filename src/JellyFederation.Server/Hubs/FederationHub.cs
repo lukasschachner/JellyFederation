@@ -18,6 +18,9 @@ namespace JellyFederation.Server.Hubs;
 /// </summary>
 public partial class FederationHub : Hub
 {
+    private const int MaxIceSignalPayloadChars = 128 * 1024;
+    private const int MaxRelayChunkBytes = 32 * 1024;
+
     private readonly FederationDbContext _db;
     private readonly ILogger<FederationHub> _logger;
     private readonly FileRequestNotifier _notifier;
@@ -362,13 +365,14 @@ public partial class FederationHub : Hub
             request.Status = FileRequestStatus.HolePunching;
             await _db.SaveChangesAsync().ConfigureAwait(false);
 
-            await Clients.Client(sender.ConnectionId).SendAsync(
-                "IceNegotiateStart",
-                new IceNegotiateStart(request.Id, IceRole.Offerer)).ConfigureAwait(false);
-
+            // Start the answerer first so it has a session ready before the offerer can send SDP.
             await Clients.Client(receiver.ConnectionId).SendAsync(
                 "IceNegotiateStart",
                 new IceNegotiateStart(request.Id, IceRole.Answerer)).ConfigureAwait(false);
+
+            await Clients.Client(sender.ConnectionId).SendAsync(
+                "IceNegotiateStart",
+                new IceNegotiateStart(request.Id, IceRole.Offerer)).ConfigureAwait(false);
 
             LogIceNegotiationStarted(_logger, request.Id);
             LogTransportModeSelected(_logger, request.Id, TransferTransportMode.WebRtc, TransferSelectionReason.IceNegotiated);
@@ -429,6 +433,9 @@ public partial class FederationHub : Hub
     /// </summary>
     public async Task ForwardIceSignal(IceSignal signal)
     {
+        if (signal.Payload.Length > MaxIceSignalPayloadChars)
+            return;
+
         var senderId = _tracker.GetServerId(Context.ConnectionId);
         if (senderId is null)
         {
@@ -475,6 +482,9 @@ public partial class FederationHub : Hub
     /// </summary>
     public async Task RelaySendChunk(RelayChunk chunk)
     {
+        if (chunk.Data.Length > MaxRelayChunkBytes)
+            return;
+
         var senderId = _tracker.GetServerId(Context.ConnectionId);
         if (senderId is null)
         {
@@ -524,27 +534,29 @@ public partial class FederationHub : Hub
             return;
         }
 
-        // Project only the routing fields — no need to load or track the full FileRequest.
-        var routing = await _db.FileRequests
-            .Where(r => r.Id == message.FileRequestId)
-            .Select(r => new { r.OwningServerId, r.RequestingServerId })
-            .FirstOrDefaultAsync().ConfigureAwait(false);
-        if (routing is null)
+        var request = await _db.FileRequests
+            .FirstOrDefaultAsync(r => r.Id == message.FileRequestId).ConfigureAwait(false);
+        if (request is null)
             return;
 
-        if (senderId.Value != routing.OwningServerId)
+        if (senderId.Value != request.OwningServerId)
         {
             LogHubWorkflowUnauthorizedParticipant(_logger, nameof(ForwardRelayTransferStart), message.FileRequestId,
-                senderId.Value, routing.OwningServerId, routing.RequestingServerId);
+                senderId.Value, request.OwningServerId, request.RequestingServerId);
             return;
         }
 
-        var targetConnectionId = _tracker.GetConnectionId(routing.RequestingServerId);
+        request.SelectedTransportMode = TransferTransportMode.Relay;
+        request.TransportSelectionReason = TransferSelectionReason.IceFailed;
+        await _db.SaveChangesAsync().ConfigureAwait(false);
+        await _notifier.NotifyStatusAsync(request).ConfigureAwait(false);
+
+        var targetConnectionId = _tracker.GetConnectionId(request.RequestingServerId);
         if (targetConnectionId is null)
             return;
 
         await Clients.Client(targetConnectionId).SendAsync("RelayTransferStart", message).ConfigureAwait(false);
-        LogRelayTransferStartForwarded(_logger, message.FileRequestId, routing.RequestingServerId);
+        LogRelayTransferStartForwarded(_logger, message.FileRequestId, request.RequestingServerId);
     }
 
     private async Task<TransferSelection> SelectTransportModeAsync(

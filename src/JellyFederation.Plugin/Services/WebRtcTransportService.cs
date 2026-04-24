@@ -22,6 +22,8 @@ public partial class WebRtcTransportService
     private const string DataChannelLabel = "transfer";
 
     private readonly ConcurrentDictionary<Guid, IceNegotiationSession> _sessions = new();
+    private readonly ConcurrentDictionary<Guid, ConcurrentQueue<IceSignal>> _pendingSignals = new();
+    private readonly ConcurrentDictionary<Guid, string> _streamUrls = new();
     private readonly FileTransferService _fileTransfer;
     private readonly LocalStreamEndpoint _streamEndpoint;
     private readonly IPluginConfigurationProvider _configProvider;
@@ -54,9 +56,10 @@ public partial class WebRtcTransportService
             "ice.negotiate.offerer", ActivityKind.Client);
 
         var pc = CreatePeerConnection(config);
-        using var cts = new CancellationTokenSource(IceTimeoutMs);
+        var cts = new CancellationTokenSource();
         var session = new IceNegotiationSession(fileRequestId, pc, IceRole.Offerer, cts);
         _sessions[fileRequestId] = session;
+        DrainPendingSignals(fileRequestId);
 
         // Wire up trickle candidate forwarding
         pc.onicecandidate += candidate =>
@@ -79,7 +82,18 @@ public partial class WebRtcTransportService
         {
             LogDataChannelOpen(_logger, fileRequestId, IceRole.Offerer);
             session.State = IceSessionState.Connected;
-            _ = Task.Run(() => _fileTransfer.SendDataChannelAsync(fileRequestId, jellyfinItemId, dc, config, cts.Token));
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await _fileTransfer.SendDataChannelAsync(fileRequestId, jellyfinItemId, dc, config, cts.Token)
+                        .ConfigureAwait(false);
+                }
+                finally
+                {
+                    CleanupSession(fileRequestId);
+                }
+            });
         };
         dc.onclose += () => LogDataChannelClosed(_logger, fileRequestId);
 
@@ -98,6 +112,8 @@ public partial class WebRtcTransportService
         await connection.SendAsync("ForwardIceSignal",
             new IceSignal(fileRequestId, IceSignalType.Offer, offer.sdp),
             cts.Token).ConfigureAwait(false);
+
+        StartOffererConnectionTimeout(fileRequestId, jellyfinItemId, connection, config);
     }
 
     /// <summary>
@@ -114,13 +130,14 @@ public partial class WebRtcTransportService
             "ice.negotiate.answerer", ActivityKind.Client);
 
         var pc = CreatePeerConnection(config);
-        using var cts = new CancellationTokenSource(IceTimeoutMs);
+        var cts = new CancellationTokenSource();
         var offerTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var session = new IceNegotiationSession(fileRequestId, pc, IceRole.Answerer, cts)
         {
             OfferTcs = offerTcs
         };
         _sessions[fileRequestId] = session;
+        DrainPendingSignals(fileRequestId);
 
         // Wire up trickle candidate forwarding
         pc.onicecandidate += candidate =>
@@ -145,7 +162,18 @@ public partial class WebRtcTransportService
             {
                 LogDataChannelOpen(_logger, fileRequestId, IceRole.Answerer);
                 session.State = IceSessionState.Connected;
-                _ = Task.Run(() => _fileTransfer.ReceiveDataChannelAsync(fileRequestId, dc, config, connection, cts.Token));
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _fileTransfer.ReceiveDataChannelAsync(fileRequestId, dc, config, connection, cts.Token)
+                            .ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        CleanupSession(fileRequestId);
+                    }
+                });
             };
             dc.onclose += () => LogDataChannelClosed(_logger, fileRequestId);
         };
@@ -162,9 +190,10 @@ public partial class WebRtcTransportService
         string sdpOffer;
         try
         {
-            sdpOffer = await offerTcs.Task.WaitAsync(cts.Token).ConfigureAwait(false);
+            sdpOffer = await offerTcs.Task.WaitAsync(TimeSpan.FromMilliseconds(IceTimeoutMs), cts.Token)
+                .ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (ex is OperationCanceledException or TimeoutException)
         {
             LogIceTimeout(_logger, fileRequestId);
             CleanupSession(fileRequestId);
@@ -177,6 +206,8 @@ public partial class WebRtcTransportService
             sdp = sdpOffer
         };
         pc.setRemoteDescription(remoteOffer);
+        session.RemoteDescriptionApplied = true;
+        FlushPendingCandidates(session);
 
         var answer = pc.createAnswer();
         await pc.setLocalDescription(answer).ConfigureAwait(false);
@@ -195,6 +226,8 @@ public partial class WebRtcTransportService
     {
         if (!_sessions.TryGetValue(signal.FileRequestId, out var session))
         {
+            var pending = _pendingSignals.GetOrAdd(signal.FileRequestId, _ => new ConcurrentQueue<IceSignal>());
+            pending.Enqueue(signal);
             LogIceSignalNoSession(_logger, signal.FileRequestId, signal.Type.ToString());
             return;
         }
@@ -213,6 +246,8 @@ public partial class WebRtcTransportService
                     type = RTCSdpType.answer,
                     sdp = signal.Payload
                 });
+                session.RemoteDescriptionApplied = true;
+                FlushPendingCandidates(session);
                 LogSdpAnswerApplied(_logger, signal.FileRequestId);
                 break;
 
@@ -221,12 +256,19 @@ public partial class WebRtcTransportService
                 {
                     var init = JsonSerializer.Deserialize<IceCandidateInit>(signal.Payload);
                     if (init is not null)
-                        session.PeerConnection.addIceCandidate(new RTCIceCandidateInit
+                    {
+                        var candidate = new RTCIceCandidateInit
                         {
                             candidate = init.Candidate,
                             sdpMid = init.SdpMid,
                             sdpMLineIndex = (ushort)(init.SdpMLineIndex ?? 0)
-                        });
+                        };
+
+                        if (session.RemoteDescriptionApplied)
+                            AddRemoteCandidate(session, candidate);
+                        else
+                            session.PendingCandidates.Enqueue(candidate);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -255,8 +297,7 @@ public partial class WebRtcTransportService
     {
         var config = _configProvider.GetConfiguration();
         var pc = CreatePeerConnection(config);
-        using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        cts.CancelAfter(IceTimeoutMs);
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         var offerTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var streamUrlTcs = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -266,6 +307,7 @@ public partial class WebRtcTransportService
             OfferTcs = offerTcs
         };
         _sessions[fileRequestId] = session;
+        DrainPendingSignals(fileRequestId);
 
         pc.onicecandidate += candidate =>
         {
@@ -292,6 +334,7 @@ public partial class WebRtcTransportService
                     var token = Guid.NewGuid();
                     var url = await _streamEndpoint.RegisterStreamAsync(token, pipeReader, cts.Token)
                         .ConfigureAwait(false);
+                    _streamUrls[fileRequestId] = url;
                     streamUrlTcs.TrySetResult(url);
                 });
             };
@@ -299,21 +342,28 @@ public partial class WebRtcTransportService
             {
                 LogDataChannelClosed(_logger, fileRequestId);
                 streamUrlTcs.TrySetResult(null);
+                _streamUrls.TryRemove(fileRequestId, out _);
+                CleanupSession(fileRequestId);
             };
         };
 
         pc.onconnectionstatechange += state =>
         {
             if (state == RTCPeerConnectionState.failed || state == RTCPeerConnectionState.disconnected)
+            {
                 streamUrlTcs.TrySetResult(null);
+                _streamUrls.TryRemove(fileRequestId, out _);
+                CleanupSession(fileRequestId);
+            }
         };
 
         string sdpOffer;
         try
         {
-            sdpOffer = await offerTcs.Task.WaitAsync(cts.Token).ConfigureAwait(false);
+            sdpOffer = await offerTcs.Task.WaitAsync(TimeSpan.FromMilliseconds(IceTimeoutMs), cts.Token)
+                .ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (ex is OperationCanceledException or TimeoutException)
         {
             LogIceTimeout(_logger, fileRequestId);
             CleanupSession(fileRequestId);
@@ -321,6 +371,8 @@ public partial class WebRtcTransportService
         }
 
         pc.setRemoteDescription(new RTCSessionDescriptionInit { type = RTCSdpType.offer, sdp = sdpOffer });
+        session.RemoteDescriptionApplied = true;
+        FlushPendingCandidates(session);
         var answer = pc.createAnswer();
         await pc.setLocalDescription(answer).ConfigureAwait(false);
 
@@ -328,7 +380,8 @@ public partial class WebRtcTransportService
             new IceSignal(fileRequestId, IceSignalType.Answer, answer.sdp),
             cts.Token).ConfigureAwait(false);
 
-        return await streamUrlTcs.Task.WaitAsync(cts.Token).ConfigureAwait(false);
+        return await streamUrlTcs.Task.WaitAsync(TimeSpan.FromMilliseconds(IceTimeoutMs), cts.Token)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
@@ -336,9 +389,7 @@ public partial class WebRtcTransportService
     /// </summary>
     public string? GetStreamUrl(Guid fileRequestId)
     {
-        // Stream URLs are tracked inside LocalStreamEndpoint by token, not by fileRequestId.
-        // This method is a hook for the plugin UI layer — full wiring is deferred to the UI integration task.
-        return null;
+        return _streamUrls.TryGetValue(fileRequestId, out var url) ? url : null;
     }
 
     /// <summary>
@@ -419,8 +470,15 @@ public partial class WebRtcTransportService
             LogRelayNotifyFailed(_logger, ex, fileRequestId);
         }
 
-        await _fileTransfer.SendRelayAsync(fileRequestId, jellyfinItemId, connection, config, ct)
-            .ConfigureAwait(false);
+        try
+        {
+            await _fileTransfer.SendRelayAsync(fileRequestId, jellyfinItemId, connection, config, ct)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            CleanupSession(fileRequestId);
+        }
     }
 
     private async Task TriggerRelayReceiveAsync(
@@ -431,11 +489,21 @@ public partial class WebRtcTransportService
 
         session.State = IceSessionState.Relay;
         LogRelayReceiveModeEngaged(_logger, fileRequestId);
-        await _fileTransfer.ReceiveRelayAsync(fileRequestId, connection, config, ct).ConfigureAwait(false);
+        try
+        {
+            await _fileTransfer.ReceiveRelayAsync(fileRequestId, connection, config, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            CleanupSession(fileRequestId);
+        }
     }
 
     private void CleanupSession(Guid fileRequestId)
     {
+        _pendingSignals.TryRemove(fileRequestId, out _);
+        _streamUrls.TryRemove(fileRequestId, out _);
+
         if (_sessions.TryRemove(fileRequestId, out var session))
         {
             try
@@ -455,8 +523,63 @@ public partial class WebRtcTransportService
             {
                 _logger.LogTrace(ex, "ICE peer connection already closed for {FileRequestId}", fileRequestId);
             }
+
+            session.Cts.Dispose();
             LogSessionCleaned(_logger, fileRequestId);
         }
+    }
+
+    private void DrainPendingSignals(Guid fileRequestId)
+    {
+        if (!_pendingSignals.TryRemove(fileRequestId, out var pending))
+            return;
+
+        while (pending.TryDequeue(out var signal))
+            HandleIceSignal(signal);
+    }
+
+    private void FlushPendingCandidates(IceNegotiationSession session)
+    {
+        while (session.PendingCandidates.TryDequeue(out var candidate))
+            AddRemoteCandidate(session, candidate);
+    }
+
+    private void AddRemoteCandidate(IceNegotiationSession session, RTCIceCandidateInit candidate)
+    {
+        try
+        {
+            session.PeerConnection.addIceCandidate(candidate);
+        }
+        catch (Exception ex)
+        {
+            LogIceCandidateAddFailed(_logger, ex, session.FileRequestId);
+        }
+    }
+
+    private void StartOffererConnectionTimeout(
+        Guid fileRequestId,
+        string jellyfinItemId,
+        HubConnection connection,
+        PluginConfiguration config)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await Task.Delay(IceTimeoutMs).ConfigureAwait(false);
+
+                if (!_sessions.TryGetValue(fileRequestId, out var session) ||
+                    session.State is IceSessionState.Connected or IceSessionState.Relay)
+                    return;
+
+                await TriggerRelayFallbackAsync(fileRequestId, jellyfinItemId, connection, config, session.Cts.Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException ex)
+            {
+                _logger.LogTrace(ex, "ICE offerer connection timeout cancelled for {FileRequestId}", fileRequestId);
+            }
+        });
     }
 
     private record IceCandidateInit
@@ -486,6 +609,8 @@ internal sealed class IceNegotiationSession
     public Guid FileRequestId { get; }
     public RTCPeerConnection PeerConnection { get; }
     public RTCDataChannel? DataChannel { get; set; }
+    public ConcurrentQueue<RTCIceCandidateInit> PendingCandidates { get; } = new();
+    public bool RemoteDescriptionApplied { get; set; }
     public IceRole Role { get; }
     public IceSessionState State { get; set; }
     public DateTimeOffset CreatedAt { get; }

@@ -38,11 +38,19 @@ public partial class FileTransferService
 {
     private const uint HeaderSequence = 0xFFFF_FFFE;
     private const int ChunkSize = 32 * 1024; // 32 KB
+    private const int DataChannelReceiveQueueCapacity = 128;
+    private const int RelayReceiveQueueCapacity = 128;
+    private const ulong DataChannelMaxBufferedBytes = 4UL * 1024 * 1024;
+    private const ulong DataChannelLowBufferedBytes = 1UL * 1024 * 1024;
+    private const int DataChannelBackpressurePollMs = 10;
     private const int AckTimeoutMs = 2_000;
     private const int MaxRetries = 10;
     private const int QuicAcceptTimeoutMs = 10_000;
     private const long QuicDefaultStreamErrorCode = 0x0A;
     private const long QuicDefaultCloseErrorCode = 0x0B;
+    private const byte DataChannelHeaderFrame = 1;
+    private const byte DataChannelDataFrame = 2;
+    private const byte DataChannelEndFrame = 3;
     private static readonly SslApplicationProtocol QuicAlpn = new("jellyfederation-transfer/1");
     private static readonly byte[] EofMagic = "JFEOF"u8.ToArray();
 
@@ -66,6 +74,9 @@ public partial class FileTransferService
     // Relay chunk queues keyed by fileRequestId — populated by SignalR handler, drained by ReceiveRelayAsync
     private readonly ConcurrentDictionary<Guid, Channel<RelayChunk>>
         _relayQueues = new();
+
+    private readonly ConcurrentDictionary<Guid, ConcurrentQueue<RelayChunk>>
+        _pendingRelayChunks = new();
 
     private readonly IPluginConfigurationProvider _configProvider;
     private readonly HttpClient _http;
@@ -854,7 +865,7 @@ public partial class FileTransferService
 
     /// <summary>
     ///     Sends a file over an open WebRTC DataChannel.
-    ///     Protocol: text header JSON → binary chunks → binary EofMagic.
+    ///     Protocol: typed DataChannel frames: header JSON → binary chunks → end frame.
     /// </summary>
     public async Task SendDataChannelAsync(
         Guid fileRequestId,
@@ -879,9 +890,11 @@ public partial class FileTransferService
         _activeCts[fileRequestId] = cts;
         try
         {
-            // Header as text so receiver can distinguish it from binary chunks
-            var headerJson = JsonSerializer.Serialize(new FileHeader(fileInfo.Name, fileInfo.Length));
-            dc.send(headerJson);
+            dc.bufferedAmountLowThreshold = DataChannelLowBufferedBytes;
+
+            var headerJson = JsonSerializer.SerializeToUtf8Bytes(new FileHeader(fileInfo.Name, fileInfo.Length));
+            await SendDataChannelFrameAsync(dc, DataChannelHeaderFrame, headerJson, cts.Token)
+                .ConfigureAwait(false);
 
             var fs = fileInfo.OpenRead();
             await using var fs1 = fs.ConfigureAwait(false);
@@ -890,10 +903,12 @@ public partial class FileTransferService
             while ((bytesRead = await fs.ReadAsync(buffer, cts.Token).ConfigureAwait(false)) > 0)
             {
                 cts.Token.ThrowIfCancellationRequested();
-                dc.send(buffer[..bytesRead]);
+                await SendDataChannelFrameAsync(dc, DataChannelDataFrame, buffer.AsMemory(0, bytesRead), cts.Token)
+                    .ConfigureAwait(false);
             }
 
-            dc.send(EofMagic);
+            await SendDataChannelFrameAsync(dc, DataChannelEndFrame, ReadOnlyMemory<byte>.Empty, cts.Token)
+                .ConfigureAwait(false);
             LogFileSent(_logger, fileInfo.Name);
             FederationMetrics.RecordOperation("file.transfer.send.webrtc", "plugin",
                 FederationTelemetry.OutcomeSuccess, TimeSpan.Zero, FederationPlugin.ReleaseVersion);
@@ -929,10 +944,14 @@ public partial class FileTransferService
         Directory.CreateDirectory(config.DownloadDirectory);
 
         // Bridge the DataChannel onmessage callback into an async-friendly channel.
-        // Protocol param is ignored — we distinguish header (first message = UTF-8 JSON)
-        // from chunks (binary) and EOF (EofMagic) by position and content.
-        var pipe = Channel.CreateUnbounded<byte[]>(new UnboundedChannelOptions { SingleReader = true });
-        dc.onmessage += (_, _, data) => pipe.Writer.TryWrite(data);
+        // Protocol param is ignored — DataChannel message boundaries carry one typed transfer frame each.
+        var pipe = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(DataChannelReceiveQueueCapacity)
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.Wait
+        });
+        dc.onmessage += (_, _, data) => pipe.Writer.WriteAsync(data, ct).AsTask().GetAwaiter().GetResult();
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _activeCts[fileRequestId] = cts;
@@ -946,9 +965,12 @@ public partial class FileTransferService
 
         try
         {
-            // First message is always the JSON header (UTF-8 encoded, sent as text or binary)
-            var headerBytes = await pipe.Reader.ReadAsync(cts.Token).ConfigureAwait(false);
-            var header = JsonSerializer.Deserialize<FileHeader>(Encoding.UTF8.GetString(headerBytes));
+            // First message is always the typed JSON header frame.
+            var headerFrame = await pipe.Reader.ReadAsync(cts.Token).ConfigureAwait(false);
+            if (!TryGetDataChannelPayload(headerFrame, DataChannelHeaderFrame, out var headerPayload))
+                return;
+
+            var header = JsonSerializer.Deserialize<FileHeader>(headerPayload.Span);
             if (header is null) return;
 
             filePath = GetUniqueFilePath(Path.Combine(config.DownloadDirectory, header.FileName));
@@ -958,9 +980,8 @@ public partial class FileTransferService
 
             while (true)
             {
-                var data = await pipe.Reader.ReadAsync(cts.Token).ConfigureAwait(false);
-
-                if (data.Length == EofMagic.Length && data.AsSpan().SequenceEqual(EofMagic))
+                var frame = await pipe.Reader.ReadAsync(cts.Token).ConfigureAwait(false);
+                if (TryGetDataChannelPayload(frame, DataChannelEndFrame, out _))
                 {
                     LogReceivedEof(_logger);
                     if (totalBytes > 0)
@@ -970,8 +991,11 @@ public partial class FileTransferService
                     break;
                 }
 
-                await fs.WriteAsync(data, cts.Token).ConfigureAwait(false);
-                bytesReceived += data.Length;
+                if (!TryGetDataChannelPayload(frame, DataChannelDataFrame, out var payload))
+                    continue;
+
+                await fs.WriteAsync(payload, cts.Token).ConfigureAwait(false);
+                bytesReceived += payload.Length;
 
                 if (totalBytes > 0 && (DateTime.UtcNow - lastProgressReport).TotalSeconds >= 1)
                 {
@@ -1042,6 +1066,11 @@ public partial class FileTransferService
 
         try
         {
+            var header = JsonSerializer.SerializeToUtf8Bytes(new FileHeader(fileInfo.Name, fileInfo.Length));
+            await connection.SendAsync("RelaySendChunk",
+                new RelayChunk(fileRequestId, -1, false, header),
+                ct).ConfigureAwait(false);
+
             var fs = fileInfo.OpenRead();
             await using var fs1 = fs.ConfigureAwait(false);
             var buffer = new byte[ChunkSize];
@@ -1092,8 +1121,18 @@ public partial class FileTransferService
 
         Directory.CreateDirectory(config.DownloadDirectory);
 
-        var queue = Channel.CreateUnbounded<RelayChunk>(new UnboundedChannelOptions { SingleReader = true });
+        var queue = Channel.CreateBounded<RelayChunk>(new BoundedChannelOptions(RelayReceiveQueueCapacity)
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.Wait
+        });
         _relayQueues[fileRequestId] = queue;
+        if (_pendingRelayChunks.TryRemove(fileRequestId, out var pendingChunks))
+        {
+            while (pendingChunks.TryDequeue(out var pendingChunk))
+                await queue.Writer.WriteAsync(pendingChunk, ct).ConfigureAwait(false);
+        }
 
         string? filePath = null;
         FileStream? fs = null;
@@ -1157,6 +1196,7 @@ public partial class FileTransferService
         finally
         {
             _relayQueues.TryRemove(fileRequestId, out _);
+            _pendingRelayChunks.TryRemove(fileRequestId, out _);
 
             if (fs is not null)
             {
@@ -1197,28 +1237,51 @@ public partial class FileTransferService
     public PipeReader ReceiveStreamingAsync(Guid fileRequestId, RTCDataChannel dc, CancellationToken ct)
     {
         var pipe = new Pipe();
+        var frames = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(DataChannelReceiveQueueCapacity)
+        {
+            SingleReader = true,
+            SingleWriter = false,
+            FullMode = BoundedChannelFullMode.Wait
+        });
 
         dc.onmessage += (_, _, data) =>
         {
-            // Skip header and EOF frames — just stream raw bytes to the pipe
-            if (data.Length == EofMagic.Length && data.AsSpan().SequenceEqual(EofMagic))
-            {
-                pipe.Writer.Complete();
-                return;
-            }
-
-            // Skip the first (header) message — it's JSON, not media data
-            // We detect it by checking if it starts with '{' (valid JSON header)
-            if (data.Length > 0 && data[0] == (byte)'{')
-                return;
-
-            var mem = pipe.Writer.GetMemory(data.Length);
-            data.CopyTo(mem);
-            pipe.Writer.Advance(data.Length);
-            _ = pipe.Writer.FlushAsync(ct).AsTask();
+            frames.Writer.WriteAsync(data, ct).AsTask().GetAwaiter().GetResult();
         };
 
-        ct.Register(() => pipe.Writer.Complete(new OperationCanceledException(ct)));
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (var frame in frames.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+                {
+                    if (TryGetDataChannelPayload(frame, DataChannelEndFrame, out _))
+                        break;
+
+                    if (!TryGetDataChannelPayload(frame, DataChannelDataFrame, out var payload))
+                        continue;
+
+                    var flush = await pipe.Writer.WriteAsync(payload, ct).ConfigureAwait(false);
+                    if (flush.IsCompleted || flush.IsCanceled)
+                        break;
+                }
+
+                await pipe.Writer.CompleteAsync().ConfigureAwait(false);
+            }
+            catch (OperationCanceledException ex)
+            {
+                await pipe.Writer.CompleteAsync(ex).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                await pipe.Writer.CompleteAsync(ex).ConfigureAwait(false);
+            }
+        }, CancellationToken.None);
+
+        ct.Register(() =>
+        {
+            frames.Writer.TryComplete(new OperationCanceledException(ct));
+        });
         LogStreamingReceiveStarted(_logger, fileRequestId);
         return pipe.Reader;
     }
@@ -1229,7 +1292,53 @@ public partial class FileTransferService
     public void EnqueueRelayChunk(RelayChunk chunk)
     {
         if (_relayQueues.TryGetValue(chunk.FileRequestId, out var queue))
-            queue.Writer.TryWrite(chunk);
+        {
+            queue.Writer.WriteAsync(chunk).AsTask().GetAwaiter().GetResult();
+            return;
+        }
+
+        var pending = _pendingRelayChunks.GetOrAdd(chunk.FileRequestId, _ => new ConcurrentQueue<RelayChunk>());
+        pending.Enqueue(chunk);
+    }
+
+    private static async Task SendDataChannelFrameAsync(
+        RTCDataChannel channel,
+        byte frameType,
+        ReadOnlyMemory<byte> payload,
+        CancellationToken ct)
+    {
+        var frame = CreateDataChannelFrame(frameType, payload);
+        await WaitForDataChannelBufferAsync(channel, ct).ConfigureAwait(false);
+        channel.send(frame);
+    }
+
+    private static async Task WaitForDataChannelBufferAsync(RTCDataChannel channel, CancellationToken ct)
+    {
+        while (channel.bufferedAmount > DataChannelMaxBufferedBytes)
+        {
+            ct.ThrowIfCancellationRequested();
+            await Task.Delay(DataChannelBackpressurePollMs, ct).ConfigureAwait(false);
+        }
+    }
+
+    private static byte[] CreateDataChannelFrame(byte frameType, ReadOnlyMemory<byte> payload)
+    {
+        var frame = new byte[payload.Length + 1];
+        frame[0] = frameType;
+        payload.Span.CopyTo(frame.AsSpan(1));
+        return frame;
+    }
+
+    private static bool TryGetDataChannelPayload(byte[] frame, byte expectedFrameType, out ReadOnlyMemory<byte> payload)
+    {
+        if (frame.Length == 0 || frame[0] != expectedFrameType)
+        {
+            payload = default;
+            return false;
+        }
+
+        payload = frame.AsMemory(1);
+        return true;
     }
 
     private async Task MarkCompleteAsync(Guid fileRequestId, string correlationId, CancellationToken ct)
