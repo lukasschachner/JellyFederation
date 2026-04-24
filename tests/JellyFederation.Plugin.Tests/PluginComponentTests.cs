@@ -117,6 +117,9 @@ public sealed class PluginComponentTests
             "publicJellyfinUrl",
             "downloadDirectory",
             "stunServer",
+            "turnServer",
+            "turnUsername",
+            "turnCredential",
             "overridePublicIp",
             "holePunchPort",
             "preferQuicForLargeFiles",
@@ -164,6 +167,9 @@ public sealed class PluginComponentTests
         Assert.True(configuration.PreferQuicForLargeFiles);
         Assert.Equal(512L * 1024 * 1024, configuration.LargeFileQuicThresholdBytes);
         Assert.Equal("stun.l.google.com:19302", configuration.StunServer);
+        Assert.Equal(string.Empty, configuration.TurnServer);
+        Assert.Equal(string.Empty, configuration.TurnUsername);
+        Assert.Equal(string.Empty, configuration.TurnCredential);
         Assert.Equal("jellyfederation-plugin", configuration.TelemetryServiceName);
         Assert.Equal("http://localhost:4317", configuration.TelemetryOtlpEndpoint);
         Assert.Equal(1.0, configuration.TelemetrySamplingRatio);
