@@ -8,6 +8,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "1.3.0",
+        "changelog": "## What's Changed\n\n### Audit remediation groundwork\n- Bounded pagination for file request, invitation, and server list endpoints with `X-Total-Count`/page headers.\n- EF Core indexes for scalable list queries and a unique `(ServerId, JellyfinItemId)` constraint for media items, with SQLite and PostgreSQL migrations.\n- Library sync refactored to use set-based stale cleanup with cancellation propagation.\n- Lower default Kestrel request body limit (10 MiB) and gated production database auto-migration behind `Database:AutoMigrate`.\n- Initial security/CORS/session/rate-limit options with startup validation, API key hashing helpers, and stable security failure codes.\n- Extracted `InvitationService` from the controller for cleaner workflow boundaries.\n\n### CI and supply-chain hardening\n- New `Dependency and Supply Chain` workflow: NuGet `--vulnerable` audit and `npm audit`/build checks.\n- Docker release workflow now resolves base image digests, generates an SPDX SBOM, and scans images with Trivy.\n- Repository hygiene rules and `.dockerignore` updated; npm `postcss` moderate advisory resolved.\n\n### Documentation\n- Added `docs/reviews/repo-audit-index.md` and four detailed audit reports.\n- Added Speckit specifications under `specs/005`\u2013`specs/008` with action plans for security, performance, refactoring, and supply-chain remediation.\n\n## Validation\n\n- `dotnet build JellyFederation.slnx`\n- `dotnet test --solution JellyFederation.slnx`\n- `cd src/JellyFederation.Web && npm audit --audit-level=moderate && npm run build`\n\n**Full Changelog**: https://github.com/lukasschachner/JellyFederation/compare/v1.2.4...v1.3.0",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/lukasschachner/JellyFederation/releases/download/v1.3.0/jellyfederation_1.3.0.zip",
+        "checksum": "4b12976b172eeae927c9ce5545c5b1d6",
+        "timestamp": "2026-04-25T22:24:04Z"
+      },
+      {
         "version": "1.2.4",
         "changelog": "## Fixes\n- Persist transfer status updates with tracked EF Core mutation queries.\n- Mark WebRTC DataChannel transfers as started when the channel opens.\n- Wait for WebRTC DataChannel EOF frames to drain before cleanup.\n- Complete receive queues on DataChannel close so partial transfers do not hang.\n- Includes v1.2.1 fixes for answerer receive startup and SignalR relay message size.\n\n## Validation\n- dotnet build JellyFederation.slnx\n- dotnet test --solution JellyFederation.slnx\n- slopwatch analyze --fail-on warning",
         "targetAbi": "10.11.0.0",
