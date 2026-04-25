@@ -1,19 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { AlertCircle, CheckCircle2, Clock, Download, Loader2, Radio, X } from 'lucide-react'
 import { fileRequestsApi } from '../api/client'
+import { requestsLiveUpdatedAtQueryKey, requestsQueryKey, transferProgressQueryKey } from '../api/queryKeys'
 import type { FileRequest, FileRequestStatus } from '../api/types'
 import { Badge } from '../components/Badge'
 import { Card } from '../components/Card'
 import { useConfig } from '../hooks/useConfig'
 import { formatBytes } from '../utils/formatBytes'
 import { formatDateTime } from '../utils/formatDate'
-import type { FileRequestUpdate, TransferProgress } from '../hooks/useSignalR'
-
-interface RequestsProps {
-  latestUpdate: FileRequestUpdate | null
-  latestProgress: TransferProgress | null
-}
+import type { TransferProgress } from '../hooks/useSignalR'
 
 const statusIcon: Record<FileRequestStatus, React.ReactNode> = {
   Pending: <Clock size={14} className="text-yellow-400" />,
@@ -111,8 +107,10 @@ function RequestRow({
         <Badge variant={statusVariant[req.status]}>{req.status}</Badge>
         {canCancel && (
           <button
+            type="button"
             onClick={() => onCancel(req.id)}
             disabled={cancelling}
+            aria-label={`Cancel request for ${req.itemTitle ?? req.jellyfinItemId}`}
             className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-400 hover:text-red-400 hover:bg-red-400/10 transition-colors disabled:opacity-40"
             title="Cancel"
           >
@@ -124,15 +122,28 @@ function RequestRow({
   )
 }
 
-export function Requests({ latestUpdate, latestProgress }: RequestsProps) {
+export function Requests() {
   const cfg = useConfig()
   const qc = useQueryClient()
-  const [progressMap, setProgressMap] = useState<Record<string, TransferProgress>>({})
   const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set())
 
   const { data: requests, isLoading } = useQuery({
-    queryKey: ['requests'],
+    queryKey: requestsQueryKey,
     queryFn: fileRequestsApi.list,
+  })
+
+  const { data: progressMap = {} } = useQuery({
+    queryKey: transferProgressQueryKey,
+    queryFn: () => Promise.resolve({} as Record<string, TransferProgress>),
+    initialData: {} as Record<string, TransferProgress>,
+    staleTime: Infinity,
+  })
+
+  const { data: liveUpdatedAt = null } = useQuery({
+    queryKey: requestsLiveUpdatedAtQueryKey,
+    queryFn: () => Promise.resolve(null as number | null),
+    initialData: null as number | null,
+    staleTime: Infinity,
   })
 
   const cancelMutation = useMutation({
@@ -140,21 +151,9 @@ export function Requests({ latestUpdate, latestProgress }: RequestsProps) {
     onMutate: (id) => setCancellingIds(prev => new Set([...prev, id])),
     onSettled: (_, __, id) => {
       setCancellingIds(prev => { const s = new Set(prev); s.delete(id); return s })
-      qc.invalidateQueries({ queryKey: ['requests'] })
+      qc.invalidateQueries({ queryKey: requestsQueryKey })
     },
   })
-
-  // Refresh list whenever a SignalR status update arrives
-  useEffect(() => {
-    if (latestUpdate) qc.invalidateQueries({ queryKey: ['requests'] })
-  }, [latestUpdate, qc])
-
-  // Accumulate progress updates in local state (no refetch needed)
-  useEffect(() => {
-    if (latestProgress) {
-      setProgressMap(prev => ({ ...prev, [latestProgress.fileRequestId]: latestProgress }))
-    }
-  }, [latestProgress])
 
   const active = requests?.filter(r =>
     r.status === 'Pending' || r.status === 'HolePunching' || r.status === 'Transferring'
@@ -172,7 +171,7 @@ export function Requests({ latestUpdate, latestProgress }: RequestsProps) {
         </div>
         <div className="flex items-center gap-2 text-xs text-[var(--color-text)]">
           <Download size={13} />
-          {latestUpdate
+          {liveUpdatedAt
             ? <span className="text-[var(--color-accent)]">Live updates active</span>
             : 'Waiting for updates…'}
         </div>
