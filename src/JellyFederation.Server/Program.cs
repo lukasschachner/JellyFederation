@@ -18,6 +18,9 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
+
+const int SignalRMaximumReceiveMessageSize = 128 * 1024;
+
 builder.Logging.Configure(options =>
 {
     options.ActivityTrackingOptions =
@@ -105,7 +108,12 @@ builder.Services.AddDbContext<FederationDbContext>(opt =>
     opt.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTrackingWithIdentityResolution);
 });
 
-builder.Services.AddSignalR();
+builder.Services.AddSignalR(options =>
+{
+    // Relay chunks are raw 32 KiB payloads, but the JSON SignalR protocol base64-encodes byte[].
+    // Keep the hub receive limit comfortably above the encoded envelope size.
+    options.MaximumReceiveMessageSize = SignalRMaximumReceiveMessageSize;
+});
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<ServerConnectionTracker>();
 builder.Services.AddSingleton<FileRequestNotifier>();

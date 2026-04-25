@@ -158,8 +158,11 @@ public partial class WebRtcTransportService
             session.DataChannel = dc;
             LogDataChannelReceived(_logger, fileRequestId);
 
-            dc.onopen += () =>
+            var receiveStarted = 0;
+            void StartReceive()
             {
+                if (Interlocked.Exchange(ref receiveStarted, 1) == 1) return;
+
                 LogDataChannelOpen(_logger, fileRequestId, IceRole.Answerer);
                 session.State = IceSessionState.Connected;
                 _ = Task.Run(async () =>
@@ -174,8 +177,15 @@ public partial class WebRtcTransportService
                         CleanupSession(fileRequestId);
                     }
                 });
-            };
+            }
+
+            dc.onopen += StartReceive;
             dc.onclose += () => LogDataChannelClosed(_logger, fileRequestId);
+
+            // SIPSorcery can invoke ondatachannel after the DataChannel has already reached open.
+            // In that case the onopen callback above will not fire and no receiver will be attached.
+            if (dc.readyState == RTCDataChannelState.open)
+                StartReceive();
         };
 
         pc.onconnectionstatechange += state =>
