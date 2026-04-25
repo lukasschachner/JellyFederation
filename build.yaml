@@ -1,7 +1,7 @@
 ---
 name: "JellyFederation"
 guid: "e5c0cda1-805e-41e2-9654-e17143dc31a1"
-version: "1.2.2.0"
+version: "1.2.3.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 owner: "lukasschachner"
@@ -12,6 +12,7 @@ artifacts:
   - "JellyFederation.Plugin.dll"
   - "JellyFederation.Shared.dll"
 changelog: |-
+  - Mark WebRTC DataChannel transfers as started when the channel opens.
   - Wait for WebRTC DataChannel EOF frames to drain before cleanup.
   - Complete receive queues on DataChannel close so partial transfers do not hang.
   - Fix WebRTC answerer receive startup when incoming DataChannels are already open.
