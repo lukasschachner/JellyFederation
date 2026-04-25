@@ -1,22 +1,17 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Film, Mic2, MonitorPlay, Search, Tv } from 'lucide-react'
 import { libraryApi } from '../api/client'
-import type { MediaItem, MediaType } from '../api/types'
+import type { MediaItem } from '../api/types'
 import { Badge } from '../components/Badge'
 import { Card } from '../components/Card'
+import { MediaListSkeleton } from '../components/MediaSkeletons'
+import { MediaSearchBox } from '../components/MediaSearchBox'
+import { MediaTypeIcon } from '../components/MediaTypeIcon'
+import { MediaTypeTabs } from '../components/MediaTypeTabs'
 import { Paginator } from '../components/Paginator'
 import { formatBytes } from '../utils/formatBytes'
-import { useMediaFilter, TABS } from '../hooks/useMediaFilter'
+import { useMediaFilter } from '../hooks/useMediaFilter'
 
 const PAGE_SIZE = 100
-
-const typeIcon: Record<MediaType, React.ReactNode> = {
-  Movie: <Film size={13} />,
-  Series: <Tv size={13} />,
-  Episode: <MonitorPlay size={13} />,
-  Music: <Mic2 size={13} />,
-  Other: null,
-}
 
 function RequestableToggle({ item }: { item: MediaItem }) {
   const queryClient = useQueryClient()
@@ -30,6 +25,10 @@ function RequestableToggle({ item }: { item: MediaItem }) {
 
   return (
     <button
+      type="button"
+      role="switch"
+      aria-checked={item.isRequestable}
+      aria-label={`${item.title} is ${item.isRequestable ? 'requestable' : 'private'}`}
       onClick={() => mutation.mutate(!item.isRequestable)}
       disabled={mutation.isPending}
       title={item.isRequestable ? 'Click to make private' : 'Click to make requestable'}
@@ -78,54 +77,16 @@ export function MyMedia() {
         )}
       </div>
 
-      {/* Tabs */}
-      <div className="flex flex-wrap gap-1 mb-4 p-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl w-fit">
-        {TABS.map(tab => {
-          const count = counts?.[tab.value]
-          if (count === 0 && tab.value !== 'All') return null
-          return (
-            <button
-              key={tab.value}
-              onClick={() => handleTab(tab.value)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                activeTab === tab.value
-                  ? 'bg-[var(--color-accent-dim)] text-[var(--color-accent)]'
-                  : 'text-[var(--color-text)] hover:bg-white/5 hover:text-[var(--color-heading)]'
-              }`}
-            >
-              {tab.label}
-              {count !== undefined && (
-                <span className={`text-xs px-1.5 py-0.5 rounded-md ${
-                  activeTab === tab.value
-                    ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]'
-                    : 'bg-white/5 text-[var(--color-text)]'
-                }`}>
-                  {count}
-                </span>
-              )}
-            </button>
-          )
-        })}
-      </div>
+      <MediaTypeTabs activeTab={activeTab} counts={counts} onTabChange={handleTab} />
 
-      {/* Search */}
-      <div className="relative mb-4">
-        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text)]" />
-        <input
-          value={search}
-          onChange={e => handleSearch(e.target.value)}
-          placeholder="Search titles…"
-          className="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg pl-9 pr-4 py-2.5 text-sm text-[var(--color-heading)] placeholder:text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 transition"
-        />
-      </div>
+      <MediaSearchBox
+        label="Search my media titles"
+        value={search}
+        onChange={handleSearch}
+        className="mb-4"
+      />
 
-      {isLoading && (
-        <div className="space-y-2">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="h-14 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl animate-pulse" />
-          ))}
-        </div>
-      )}
+      {isLoading && <MediaListSkeleton />}
 
       {error && (
         <Card className="text-center py-10">
@@ -151,7 +112,7 @@ export function MyMedia() {
                 className="flex items-center gap-4 px-4 py-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-accent)]/30 transition-colors"
               >
                 <div className="text-[var(--color-text)] shrink-0">
-                  {typeIcon[item.type] ?? <Film size={13} />}
+                  <MediaTypeIcon type={item.type} />
                 </div>
 
                 <div className="flex-1 min-w-0 flex items-center gap-3">

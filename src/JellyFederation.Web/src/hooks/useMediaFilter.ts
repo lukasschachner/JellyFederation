@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { MediaType } from '../api/types'
 
 export const TABS: { label: string; value: MediaType | 'All' }[] = [
@@ -23,6 +23,10 @@ export function useMediaFilter() {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
     searchTimerRef.current = setTimeout(() => setDebouncedSearch(value), 300)
   }
+
+  useEffect(() => () => {
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+  }, [])
 
   function handleTab(tab: MediaType | 'All') {
     setActiveTab(tab)

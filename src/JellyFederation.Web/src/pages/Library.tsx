@@ -1,24 +1,20 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Download, Film, Mic2, MonitorPlay, Search, Tv } from 'lucide-react'
+import { Download, Search } from 'lucide-react'
 import { libraryApi, fileRequestsApi } from '../api/client'
 import type { MediaItem, MediaType } from '../api/types'
 import { Badge } from '../components/Badge'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
+import { MediaGridSkeleton } from '../components/MediaSkeletons'
+import { MediaSearchBox } from '../components/MediaSearchBox'
+import { MediaTypeIcon } from '../components/MediaTypeIcon'
+import { MediaTypeTabs } from '../components/MediaTypeTabs'
 import { Paginator } from '../components/Paginator'
 import { formatBytes } from '../utils/formatBytes'
-import { useMediaFilter, TABS } from '../hooks/useMediaFilter'
+import { useMediaFilter } from '../hooks/useMediaFilter'
 
 const PAGE_SIZE = 100
-
-const typeIcon: Record<MediaType, React.ReactNode> = {
-  Movie: <Film size={13} />,
-  Series: <Tv size={13} />,
-  Episode: <MonitorPlay size={13} />,
-  Music: <Mic2 size={13} />,
-  Other: null,
-}
 
 const typeBadge: Record<MediaType, 'default' | 'success' | 'warning' | 'neutral'> = {
   Movie: 'default',
@@ -44,7 +40,7 @@ function MediaCard({ item, onRequest }: { item: MediaItem; onRequest: (item: Med
             onError={() => setImageFailed(true)}
           />
         ) : (
-          typeIcon[item.type] ?? <Film size={24} />
+          <MediaTypeIcon type={item.type} size={24} />
         )}
       </div>
 
@@ -117,63 +113,20 @@ export function Library() {
         )}
       </div>
 
-      {/* Tabs */}
-      <div className="flex flex-wrap gap-1 mb-4 p-1 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl w-fit">
-        {TABS.map(tab => {
-          const count = counts?.[tab.value]
-          if (count === 0 && tab.value !== 'All') return null
-          return (
-            <button
-              key={tab.value}
-              onClick={() => handleTab(tab.value)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                activeTab === tab.value
-                  ? 'bg-[var(--color-accent-dim)] text-[var(--color-accent)]'
-                  : 'text-[var(--color-text)] hover:bg-white/5 hover:text-[var(--color-heading)]'
-              }`}
-            >
-              {tab.label}
-              {count !== undefined && (
-                <span className={`text-xs px-1.5 py-0.5 rounded-md ${
-                  activeTab === tab.value
-                    ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)]'
-                    : 'bg-white/5 text-[var(--color-text)]'
-                }`}>
-                  {count}
-                </span>
-              )}
-            </button>
-          )
-        })}
-      </div>
+      <MediaTypeTabs activeTab={activeTab} counts={counts} onTabChange={handleTab} />
 
-      {/* Search */}
-      <div className="relative mb-6">
-        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--color-text)]" />
-        <input
-          value={search}
-          onChange={e => handleSearch(e.target.value)}
-          placeholder="Search titles…"
-          className="w-full bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg pl-9 pr-4 py-2.5 text-sm text-[var(--color-heading)] placeholder:text-[var(--color-text)] outline-none focus:ring-2 focus:ring-[var(--color-accent)]/40 transition"
-        />
-      </div>
+      <MediaSearchBox
+        label="Search library titles"
+        value={search}
+        onChange={handleSearch}
+      />
 
-      {isLoading && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-xl p-5 animate-pulse">
-              <div className="w-full aspect-video bg-white/5 rounded-lg mb-3" />
-              <div className="h-4 bg-white/5 rounded mb-2" />
-              <div className="h-3 bg-white/5 rounded w-2/3" />
-            </div>
-          ))}
-        </div>
-      )}
+      {isLoading && <MediaGridSkeleton />}
 
       {requestError && (
         <div className="mb-4 px-4 py-3 rounded-lg bg-red-950/40 border border-red-900/40 text-sm text-red-400 flex items-center justify-between">
           <span>{requestError}</span>
-          <button onClick={() => setRequestError(null)} className="text-red-400 hover:text-red-300 ml-4 cursor-pointer">×</button>
+          <button type="button" aria-label="Dismiss request error" onClick={() => setRequestError(null)} className="text-red-400 hover:text-red-300 ml-4 cursor-pointer">×</button>
         </div>
       )}
 
