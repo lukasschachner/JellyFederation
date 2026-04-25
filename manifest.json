@@ -8,6 +8,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "1.2.2",
+        "changelog": "## Fixes\n- Wait for WebRTC DataChannel EOF frames to drain before cleaning up the peer connection.\n- Complete the WebRTC receive queue when the DataChannel closes so partial transfers do not hang indefinitely.\n- Includes v1.2.1 fixes for answerer receive startup and SignalR relay message size.\n\n## Validation\n- dotnet build JellyFederation.slnx\n- dotnet test --solution JellyFederation.slnx\n- slopwatch analyze --fail-on warning",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/lukasschachner/JellyFederation/releases/download/v1.2.2/jellyfederation_1.2.2.zip",
+        "checksum": "af29cc8aa2b615a4086ce25161e15305",
+        "timestamp": "2026-04-25T09:16:16Z"
+      },
+      {
         "version": "1.2.1",
         "changelog": "## Fixes\n- Fix WebRTC answerer receive startup when SIPSorcery delivers an already-open incoming DataChannel.\n- Raise SignalR hub receive size so JSON-encoded relay chunks fit under the server cap.\n\n## Validation\n- dotnet build JellyFederation.slnx\n- dotnet test --solution JellyFederation.slnx\n- slopwatch analyze --fail-on warning",
         "targetAbi": "10.11.0.0",
