@@ -262,14 +262,26 @@ public sealed class SignalRWorkflowTests : IAsyncLifetime
         await requesterWeb.StartAsync(cancellationToken);
         await ownerWeb.StartAsync(cancellationToken);
 
-        await requesterPlugin.InvokeAsync("ReportTransferProgress", new TransferProgress(request.Id, 512, 1024),
-            cancellationToken);
+        var expectedProgress = new TransferProgress(request.Id, 512, 1024);
+        var requesterUpdateTask = ReadUntilAsync(requesterProgress, progress => progress == expectedProgress, cancellationToken);
+        var ownerUpdateTask = ReadUntilAsync(ownerProgress, progress => progress == expectedProgress, cancellationToken);
 
-        var requesterUpdate = await requesterProgress.ReadAsync(cancellationToken);
-        var ownerUpdate = await ownerProgress.ReadAsync(cancellationToken);
-        Assert.Equal(request.Id, requesterUpdate.FileRequestId);
-        Assert.Equal(512, requesterUpdate.BytesReceived);
-        Assert.Equal(1024, requesterUpdate.TotalBytes);
+        // Long-polling clients can complete StartAsync just before their receive poll is established on
+        // slower CI runners. Repeat the transient progress notification until both server groups observe it.
+        while (!requesterUpdateTask.IsCompleted || !ownerUpdateTask.IsCompleted)
+        {
+            await requesterPlugin.InvokeAsync("ReportTransferProgress", expectedProgress, cancellationToken);
+
+            var bothUpdates = Task.WhenAll(requesterUpdateTask, ownerUpdateTask);
+            var completed = await Task.WhenAny(
+                bothUpdates,
+                Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken));
+            if (completed == bothUpdates)
+                break;
+        }
+
+        var requesterUpdate = await requesterUpdateTask;
+        var ownerUpdate = await ownerUpdateTask;
         Assert.Equal(requesterUpdate, ownerUpdate);
     }
 
