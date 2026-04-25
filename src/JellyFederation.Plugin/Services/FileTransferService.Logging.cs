@@ -76,6 +76,13 @@ public partial class FileTransferService
     [LoggerMessage(20, LogLevel.Debug, "Failed to report transfer progress for {Id}")]
     private static partial void LogReportProgressFailed(ILogger logger, Exception ex, Guid id);
 
+    [LoggerMessage(28, LogLevel.Warning,
+        "DataChannel closed before EOF for request {Id} after {BytesReceived}/{TotalBytes} bytes")]
+    private static partial void LogDataChannelClosedBeforeEof(ILogger logger, Guid id, long bytesReceived, long totalBytes);
+
+    [LoggerMessage(29, LogLevel.Debug, "Ignored DataChannel message after receive queue closed for request {Id}")]
+    private static partial void LogDataChannelMessageAfterClose(ILogger logger, Guid id);
+
     [LoggerMessage(21, LogLevel.Debug, "ACK timeout for seq {Seq}, retrying ({Attempt}/{Max})")]
     private static partial void LogAckTimeout(ILogger logger, uint seq, int attempt, int max);
 

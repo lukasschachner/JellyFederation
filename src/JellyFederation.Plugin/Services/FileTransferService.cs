@@ -909,6 +909,7 @@ public partial class FileTransferService
 
             await SendDataChannelFrameAsync(dc, DataChannelEndFrame, ReadOnlyMemory<byte>.Empty, cts.Token)
                 .ConfigureAwait(false);
+            await WaitForDataChannelDrainAsync(dc, cts.Token).ConfigureAwait(false);
             LogFileSent(_logger, fileInfo.Name);
             FederationMetrics.RecordOperation("file.transfer.send.webrtc", "plugin",
                 FederationTelemetry.OutcomeSuccess, TimeSpan.Zero, FederationPlugin.ReleaseVersion);
@@ -951,7 +952,18 @@ public partial class FileTransferService
             SingleWriter = false,
             FullMode = BoundedChannelFullMode.Wait
         });
-        dc.onmessage += (_, _, data) => pipe.Writer.WriteAsync(data, ct).AsTask().GetAwaiter().GetResult();
+        dc.onmessage += (_, _, data) =>
+        {
+            try
+            {
+                pipe.Writer.WriteAsync(data, ct).AsTask().GetAwaiter().GetResult();
+            }
+            catch (ChannelClosedException)
+            {
+                LogDataChannelMessageAfterClose(_logger, fileRequestId);
+            }
+        };
+        dc.onclose += () => pipe.Writer.TryComplete();
 
         using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         _activeCts[fileRequestId] = cts;
@@ -1008,6 +1020,20 @@ public partial class FileTransferService
         catch (OperationCanceledException)
         {
             LogReceiveCancelled(_logger, fileRequestId);
+        }
+        catch (ChannelClosedException)
+        {
+            if (totalBytes > 0 && bytesReceived == totalBytes)
+            {
+                LogReceivedEof(_logger);
+                await ReportProgressAsync(connection, fileRequestId, totalBytes, totalBytes)
+                    .ConfigureAwait(false);
+                receivedEof = true;
+            }
+            else
+            {
+                LogDataChannelClosedBeforeEof(_logger, fileRequestId, bytesReceived, totalBytes);
+            }
         }
         finally
         {
@@ -1315,6 +1341,15 @@ public partial class FileTransferService
     private static async Task WaitForDataChannelBufferAsync(RTCDataChannel channel, CancellationToken ct)
     {
         while (channel.bufferedAmount > DataChannelMaxBufferedBytes)
+        {
+            ct.ThrowIfCancellationRequested();
+            await Task.Delay(DataChannelBackpressurePollMs, ct).ConfigureAwait(false);
+        }
+    }
+
+    private static async Task WaitForDataChannelDrainAsync(RTCDataChannel channel, CancellationToken ct)
+    {
+        while (channel.bufferedAmount > 0)
         {
             ct.ThrowIfCancellationRequested();
             await Task.Delay(DataChannelBackpressurePollMs, ct).ConfigureAwait(false);
