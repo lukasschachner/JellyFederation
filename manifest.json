@@ -8,6 +8,14 @@
     "category": "General",
     "versions": [
       {
+        "version": "1.2.4",
+        "changelog": "## Fixes\n- Persist transfer status updates with tracked EF Core mutation queries.\n- Mark WebRTC DataChannel transfers as started when the channel opens.\n- Wait for WebRTC DataChannel EOF frames to drain before cleanup.\n- Complete receive queues on DataChannel close so partial transfers do not hang.\n- Includes v1.2.1 fixes for answerer receive startup and SignalR relay message size.\n\n## Validation\n- dotnet build JellyFederation.slnx\n- dotnet test --solution JellyFederation.slnx\n- slopwatch analyze --fail-on warning",
+        "targetAbi": "10.11.0.0",
+        "sourceUrl": "https://github.com/lukasschachner/JellyFederation/releases/download/v1.2.4/jellyfederation_1.2.4.zip",
+        "checksum": "ccb578c9cee3fa4c0c9d804efc4b9f72",
+        "timestamp": "2026-04-25T09:30:50Z"
+      },
+      {
         "version": "1.2.3",
         "changelog": "## Fixes\n- Mark WebRTC DataChannel transfers as started when the channel opens so completion updates are accepted.\n- Wait for WebRTC DataChannel EOF frames to drain before cleanup.\n- Complete receive queues on DataChannel close so partial transfers do not hang.\n- Includes v1.2.1 fixes for answerer receive startup and SignalR relay message size.\n\n## Validation\n- dotnet build JellyFederation.slnx\n- dotnet test --solution JellyFederation.slnx\n- slopwatch analyze --fail-on warning",
         "targetAbi": "10.11.0.0",
