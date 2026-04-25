@@ -53,6 +53,9 @@
           "index.md",
           "toc.yml",
           "articles/**/*.md",
+          "reviews/**/*.md",
+          "supply-chain-maintenance.md",
+          "testing/**/*.md",
           "api/**/*.yml",
           "api/**/*.md"
         ]

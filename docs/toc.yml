@@ -4,6 +4,19 @@
   href: articles/getting-started.md
 - name: Architecture
   href: articles/architecture.md
+- name: Repository Audit
+  href: reviews/repo-audit-index.md
+  items:
+    - name: Security Findings
+      href: reviews/security-findings.md
+    - name: Performance Opportunities
+      href: reviews/performance-opportunities.md
+    - name: Refactoring Opportunities
+      href: reviews/refactoring-opportunities.md
+    - name: Dependencies and Supply Chain
+      href: reviews/dependency-supply-chain.md
+    - name: Supply-chain Maintenance
+      href: supply-chain-maintenance.md
 - name: Testing Strategy
   items:
     - name: API Integration Tests
