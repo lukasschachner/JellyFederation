@@ -201,7 +201,10 @@ public partial class FileRequestsController : AuthenticatedController
 
         var server = CurrentServer;
 
-        var request = await _db.FileRequests.FindAsync(id).ConfigureAwait(false);
+        var request = await _db.FileRequests
+            .AsTracking()
+            .FirstOrDefaultAsync(r => r.Id == id)
+            .ConfigureAwait(false);
         if (request is null)
         {
             LogCancelNotFound(_logger, id, server.Id);
@@ -266,7 +269,10 @@ public partial class FileRequestsController : AuthenticatedController
 
         var server = CurrentServer;
 
-        var request = await _db.FileRequests.FindAsync(id).ConfigureAwait(false);
+        var request = await _db.FileRequests
+            .AsTracking()
+            .FirstOrDefaultAsync(r => r.Id == id)
+            .ConfigureAwait(false);
         if (request is null)
         {
             LogMarkCompleteNotFound(_logger, id, server.Id);

@@ -143,7 +143,10 @@ public partial class FederationHub : Hub
 
         if (serverId is not null)
         {
-            var server = await _db.Servers.FindAsync(serverId).ConfigureAwait(false);
+            var server = await _db.Servers
+                .AsTracking()
+                .FirstOrDefaultAsync(s => s.Id == serverId)
+                .ConfigureAwait(false);
             if (server is not null)
             {
                 server.IsOnline = false;
@@ -188,7 +191,10 @@ public partial class FederationHub : Hub
                 return;
             }
 
-            var request = await _db.FileRequests.FindAsync(message.FileRequestId).ConfigureAwait(false);
+            var request = await _db.FileRequests
+                .AsTracking()
+                .FirstOrDefaultAsync(r => r.Id == message.FileRequestId)
+                .ConfigureAwait(false);
             if (request is null)
             {
                 LogHolePunchReadyNotFound(_logger, message.FileRequestId);
@@ -278,7 +284,10 @@ public partial class FederationHub : Hub
             return;
         }
 
-        var request = await _db.FileRequests.FindAsync(result.FileRequestId).ConfigureAwait(false);
+        var request = await _db.FileRequests
+            .AsTracking()
+            .FirstOrDefaultAsync(r => r.Id == result.FileRequestId)
+            .ConfigureAwait(false);
         if (request is null)
         {
             LogHolePunchResultNotFound(_logger, result.FileRequestId);
