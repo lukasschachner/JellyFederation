@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { LogOut, Server } from 'lucide-react'
+import { sessionsApi } from '../api/client'
 import { saveConfig, clearConfig } from '../lib/config'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
@@ -23,8 +24,9 @@ export function Settings({ onLogout }: SettingsProps) {
     setTimeout(() => setSaved(false), 2000)
   }
 
-  function handleLogout() {
+  async function handleLogout() {
     if (confirm('Remove this server from local storage? You can reconnect anytime with your API key.')) {
+      await sessionsApi.delete().catch(() => undefined)
       clearConfig()
       onLogout()
     }
@@ -54,7 +56,9 @@ export function Settings({ onLogout }: SettingsProps) {
           </div>
           <div className="flex items-center gap-3 py-2">
             <span className="text-[var(--color-text)] w-32 shrink-0">API Key</span>
-            <code className="text-[var(--color-heading)] font-mono text-xs">{'•'.repeat(24)}</code>
+            <code className="text-[var(--color-heading)] font-mono text-xs">
+              {cfg?.apiKey ? '•'.repeat(24) : 'Stored in secure browser session'}
+            </code>
           </div>
         </div>
       </Card>
@@ -85,7 +89,7 @@ export function Settings({ onLogout }: SettingsProps) {
         <div className="bg-black/20 rounded-lg p-4 flex flex-col gap-2 font-mono text-xs text-[var(--color-text)]">
           <div><span className="text-[var(--color-accent)]">FederationServerUrl</span> = {cfg?.serverUrl}</div>
           <div><span className="text-[var(--color-accent)]">ServerId</span> = {cfg?.serverId}</div>
-          <div><span className="text-[var(--color-accent)]">ApiKey</span> = (copy from registration)</div>
+          <div><span className="text-[var(--color-accent)]">ApiKey</span> = (copy from registration or reconnect with your API key)</div>
           <div><span className="text-[var(--color-accent)]">DownloadDirectory</span> = /path/to/media/federation</div>
         </div>
       </Card>

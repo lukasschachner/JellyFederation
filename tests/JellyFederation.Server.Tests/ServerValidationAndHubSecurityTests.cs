@@ -131,13 +131,14 @@ public sealed class ServerValidationAndHubSecurityTests : IAsyncLifetime
 
     private HubConnection CreateHubConnection(string apiKey)
     {
-        var hubUrl = new Uri(_http.BaseAddress!, $"/hubs/federation?apiKey={Uri.EscapeDataString(apiKey)}");
+        var hubUrl = new Uri(_http.BaseAddress!, "/hubs/federation");
 
         return new HubConnectionBuilder()
             .WithUrl(hubUrl, options =>
             {
                 options.HttpMessageHandlerFactory = _ => _factory.Server.CreateHandler();
                 options.Transports = HttpTransportType.LongPolling;
+                options.Headers.Add("X-Api-Key", apiKey);
             })
             .Build();
     }

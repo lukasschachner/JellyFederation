@@ -37,10 +37,13 @@ export function useSignalR({ onFileRequestUpdate, onTransferProgress }: UseSigna
   useEffect(() => { onTransferProgressRef.current = onTransferProgress }, [onTransferProgress])
 
   useEffect(() => {
-    if (!cfg?.serverUrl || !cfg?.apiKey) return
+    if (!cfg?.serverUrl) return
 
     const conn = new signalR.HubConnectionBuilder()
-      .withUrl(`${cfg.serverUrl.replace(/\/$/, '')}/hubs/federation?apiKey=${cfg.apiKey}&client=web`)
+      .withUrl(`${cfg.serverUrl}/hubs/federation?client=web`, {
+        accessTokenFactory: () => cfg.apiKey,
+        withCredentials: true,
+      })
       .withAutomaticReconnect()
       .configureLogging(signalR.LogLevel.Warning)
       .build()
@@ -57,13 +60,15 @@ export function useSignalR({ onFileRequestUpdate, onTransferProgress }: UseSigna
       onTransferProgressRef.current?.(progress)
     })
 
-    setState('connecting')
     conn.start()
       .then(() => setState('connected'))
       .catch(() => setState('disconnected'))
 
     connRef.current = conn
-    return () => { conn.stop() }
+    return () => {
+      connRef.current = null
+      void conn.stop()
+    }
   }, [cfg?.serverUrl, cfg?.apiKey])
 
   return { state }

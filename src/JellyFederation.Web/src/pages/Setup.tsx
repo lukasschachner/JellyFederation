@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Share2 } from 'lucide-react'
-import { serversApi } from '../api/client'
-import { saveConfig } from '../lib/config'
+import { serversApi, sessionsApi } from '../api/client'
+import { normalizeServerUrl, saveConfig } from '../lib/config'
 import { Button } from '../components/Button'
 import { Input } from '../components/Input'
 import { Card } from '../components/Card'
@@ -19,20 +19,23 @@ export function Setup({ onComplete }: SetupProps) {
   const [existingApiKey, setExistingApiKey] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [registeredApiKey, setRegisteredApiKey] = useState<string | null>(null)
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     setLoading(true)
     try {
-      const res = await serversApi.register(serverName, ownerUserId, serverUrl)
+      const normalizedServerUrl = normalizeServerUrl(serverUrl)
+      const res = await serversApi.register(serverName, ownerUserId, normalizedServerUrl)
+      await sessionsApi.create(normalizedServerUrl, res.serverId, res.apiKey)
       saveConfig({
-        serverUrl,
+        serverUrl: normalizedServerUrl,
         serverId: res.serverId,
-        apiKey: res.apiKey,
+        apiKey: '',
         serverName,
       })
-      onComplete()
+      setRegisteredApiKey(res.apiKey)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Registration failed')
     } finally {
@@ -40,19 +43,64 @@ export function Setup({ onComplete }: SetupProps) {
     }
   }
 
-  function handleExisting(e: React.FormEvent) {
+  async function handleExisting(e: React.FormEvent) {
     e.preventDefault()
-    if (!serverUrl || !existingServerId || !existingApiKey) {
+    const normalizedServerUrl = normalizeServerUrl(serverUrl)
+    const serverId = existingServerId.trim()
+    const apiKey = existingApiKey.trim()
+
+    if (!normalizedServerUrl || !serverId || !apiKey) {
       setError('All fields are required')
       return
     }
-    saveConfig({
-      serverUrl,
-      serverId: existingServerId,
-      apiKey: existingApiKey,
-      serverName: 'My Server',
-    })
-    onComplete()
+
+    setError('')
+    setLoading(true)
+    try {
+      const server = await serversApi.verify(normalizedServerUrl, serverId, apiKey)
+      await sessionsApi.create(normalizedServerUrl, serverId, apiKey)
+      saveConfig({
+        serverUrl: normalizedServerUrl,
+        serverId,
+        apiKey: '',
+        serverName: server.name || 'My Server',
+      })
+      onComplete()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Connection failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (registeredApiKey) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6">
+        <div className="w-full max-w-md">
+          <Card className="flex flex-col gap-4">
+            <div>
+              <h1 className="text-xl font-semibold text-[var(--color-heading)]">Server registered</h1>
+              <p className="text-sm text-[var(--color-text)] mt-1">
+                Copy this API key into your Jellyfin plugin settings now. For security, it will not be stored in browser local storage.
+              </p>
+            </div>
+            <code className="block bg-black/30 border border-[var(--color-border)] rounded-lg p-3 text-xs text-[var(--color-heading)] break-all">
+              {registeredApiKey}
+            </code>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => void navigator.clipboard.writeText(registeredApiKey)}
+            >
+              Copy API Key
+            </Button>
+            <Button type="button" variant="primary" onClick={onComplete}>
+              Continue
+            </Button>
+          </Card>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -73,6 +121,8 @@ export function Setup({ onComplete }: SetupProps) {
             {(['register', 'existing'] as const).map(m => (
               <button
                 key={m}
+                type="button"
+                aria-pressed={mode === m}
                 onClick={() => setMode(m)}
                 className={`flex-1 py-1.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
                   mode === m
@@ -139,7 +189,7 @@ export function Setup({ onComplete }: SetupProps) {
                 required
               />
               {error && <p className="text-sm text-red-400">{error}</p>}
-              <Button type="submit" variant="primary" className="mt-1">
+              <Button type="submit" variant="primary" loading={loading} className="mt-1">
                 Connect
               </Button>
             </form>

@@ -1,12 +1,8 @@
+import { loadConfig, normalizeServerUrl } from '../lib/config'
 import type { Config, FileRequest, Invitation, MediaItem, ServerInfo } from './types'
 
 function getConfig(): Config | null {
-  try {
-    const raw = localStorage.getItem('jf_config')
-    return raw ? JSON.parse(raw) : null
-  } catch {
-    return null
-  }
+  return loadConfig()
 }
 
 function headers(): Record<string, string> {
@@ -18,13 +14,17 @@ function headers(): Record<string, string> {
 }
 
 function base(): string {
-  return getConfig()?.serverUrl?.replace(/\/$/, '') ?? ''
+  return getConfig()?.serverUrl ?? ''
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response
   try {
-    res = await fetch(`${base()}${path}`, { ...init, headers: { ...headers(), ...init?.headers } })
+    res = await fetch(`${base()}${path}`, {
+      ...init,
+      credentials: 'include',
+      headers: { ...headers(), ...init?.headers },
+    })
   } catch {
     throw new Error('Cannot reach the federation server. Is it running and is the URL correct?')
   }
@@ -52,13 +52,39 @@ function normalizeFileRequest(raw: FileRequest): FileRequest {
   }
 }
 
+export const sessionsApi = {
+  create: async (serverUrl: string, serverId: string, apiKey: string) => {
+    let res: Response
+    try {
+      res = await fetch(`${normalizeServerUrl(serverUrl)}/api/sessions`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serverId, apiKey }),
+      })
+    } catch {
+      throw new Error('Cannot reach the federation server. Is it running and is the URL correct?')
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText)
+      throw new Error(text || `HTTP ${res.status}`)
+    }
+    return res.json() as Promise<{ serverId: string; serverName: string }>
+  },
+
+  delete: async () => {
+    await request<void>('/api/sessions', { method: 'DELETE' })
+  },
+}
+
 // Servers
 export const serversApi = {
   register: async (name: string, ownerUserId: string, serverUrl: string) => {
     let res: Response
     try {
-      res = await fetch(`${serverUrl.replace(/\/$/, '')}/api/servers/register`, {
+      res = await fetch(`${normalizeServerUrl(serverUrl)}/api/servers/register`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, ownerUserId }),
       })
@@ -70,6 +96,26 @@ export const serversApi = {
       throw new Error(text || `HTTP ${res.status}`)
     }
     return res.json() as Promise<{ serverId: string; apiKey: string }>
+  },
+
+  verify: async (serverUrl: string, serverId: string, apiKey: string) => {
+    let res: Response
+    try {
+      res = await fetch(`${normalizeServerUrl(serverUrl)}/api/servers/${serverId}`, {
+        credentials: 'include',
+        headers: { 'X-Api-Key': apiKey },
+      })
+    } catch {
+      throw new Error('Cannot reach the federation server. Is it running and is the URL correct?')
+    }
+    if (!res.ok) {
+      if (res.status === 401) {
+        throw new Error('Unauthorized: the API key is missing or no longer valid.')
+      }
+      const text = await res.text().catch(() => res.statusText)
+      throw new Error(text || `HTTP ${res.status}`)
+    }
+    return res.json() as Promise<ServerInfo>
   },
 
   list: () => request<ServerInfo[]>('/api/servers'),

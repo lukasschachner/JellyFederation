@@ -115,6 +115,8 @@ builder.Services.AddSignalR(options =>
     options.MaximumReceiveMessageSize = SignalRMaximumReceiveMessageSize;
 });
 builder.Services.AddMemoryCache();
+builder.Services.AddDataProtection();
+builder.Services.AddScoped<WebSessionService>();
 builder.Services.AddSingleton<ServerConnectionTracker>();
 builder.Services.AddSingleton<FileRequestNotifier>();
 builder.Services.AddSingleton<ErrorContractMapper>();

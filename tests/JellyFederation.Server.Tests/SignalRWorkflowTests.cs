@@ -1,3 +1,4 @@
+using System.Net.Http.Json;
 using System.Threading.Channels;
 using JellyFederation.Shared.Dtos;
 using JellyFederation.Shared.Models;
@@ -44,6 +45,36 @@ public sealed class SignalRWorkflowTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task BrowserCookieSessionConnectsSuccessfully()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var server = await _api.RegisterAsync($"web-cookie-{Guid.NewGuid():N}", "owner-web", cancellationToken);
+        using var sessionResponse = await _http.PostAsJsonAsync("/api/sessions", new CreateWebSessionRequest(server.ServerId, server.ApiKey),
+            cancellationToken);
+        sessionResponse.EnsureSuccessStatusCode();
+        var cookie = Assert.Single(sessionResponse.Headers.GetValues("Set-Cookie"));
+
+        await using var connection = CreateCookieHubConnection(cookie);
+
+        await connection.StartAsync(cancellationToken);
+
+        Assert.Equal(HubConnectionState.Connected, connection.State);
+    }
+
+    [Fact]
+    public async Task BrowserAccessTokenConnectsSuccessfully()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var server = await _api.RegisterAsync($"web-{Guid.NewGuid():N}", "owner-web", cancellationToken);
+
+        await using var connection = CreateBrowserAccessTokenHubConnection(server.ApiKey);
+
+        await connection.StartAsync(cancellationToken);
+
+        Assert.Equal(HubConnectionState.Connected, connection.State);
+    }
+
+    [Fact]
     public async Task FileRequestNotificationsAreDeliveredAndResentWhenPeerReconnects()
     {
         var cancellationToken = TestContext.Current.CancellationToken;
@@ -62,19 +93,25 @@ public sealed class SignalRWorkflowTests : IAsyncLifetime
         var firstRequest = await _api.CreateFileRequestAsync(requester.ApiKey, owner.ServerId, "item-reconnect-1",
             cancellationToken);
 
-        var requesterNotification = await requesterNotifications.ReadAsync(cancellationToken);
-        var ownerNotification = await ownerNotifications.ReadAsync(cancellationToken);
-        Assert.Equal(firstRequest.Id, requesterNotification.FileRequestId);
+        var requesterNotification = await ReadUntilAsync(
+            requesterNotifications,
+            notification => notification.FileRequestId == firstRequest.Id,
+            cancellationToken);
+        var ownerNotification = await ReadUntilAsync(
+            ownerNotifications,
+            notification => notification.FileRequestId == firstRequest.Id,
+            cancellationToken);
         Assert.False(requesterNotification.IsSender);
-        Assert.Equal(firstRequest.Id, ownerNotification.FileRequestId);
         Assert.True(ownerNotification.IsSender);
 
         await ownerConnection.StopAsync(cancellationToken);
 
         var missedRequest = await _api.CreateFileRequestAsync(requester.ApiKey, owner.ServerId, "item-reconnect-2",
             cancellationToken);
-        var requesterMissedNotification = await requesterNotifications.ReadAsync(cancellationToken);
-        Assert.Equal(missedRequest.Id, requesterMissedNotification.FileRequestId);
+        _ = await ReadUntilAsync(
+            requesterNotifications,
+            notification => notification.FileRequestId == missedRequest.Id,
+            cancellationToken);
 
         await using var reconnectedOwner = CreateHubConnection(owner.ApiKey);
         var reconnectedOwnerNotifications = new EventProbe<FileRequestNotification>();
@@ -251,9 +288,38 @@ public sealed class SignalRWorkflowTests : IAsyncLifetime
 
     private HubConnection CreateHubConnection(string apiKey, bool webClient = false)
     {
-        var clientQuery = webClient ? "&client=web" : string.Empty;
+        var clientQuery = webClient ? "?client=web" : string.Empty;
+        var hubUrl = new Uri(_http.BaseAddress!, $"/hubs/federation{clientQuery}");
+
+        return new HubConnectionBuilder()
+            .WithUrl(hubUrl, options =>
+            {
+                options.HttpMessageHandlerFactory = _ => _factory.Server.CreateHandler();
+                options.Transports = HttpTransportType.LongPolling;
+                options.Headers.Add("X-Api-Key", apiKey);
+            })
+            .Build();
+    }
+
+    private HubConnection CreateCookieHubConnection(string setCookieHeader)
+    {
+        var cookie = setCookieHeader.Split(';', 2)[0];
+        var hubUrl = new Uri(_http.BaseAddress!, "/hubs/federation?client=web");
+
+        return new HubConnectionBuilder()
+            .WithUrl(hubUrl, options =>
+            {
+                options.HttpMessageHandlerFactory = _ => _factory.Server.CreateHandler();
+                options.Transports = HttpTransportType.LongPolling;
+                options.Headers.Add("Cookie", cookie);
+            })
+            .Build();
+    }
+
+    private HubConnection CreateBrowserAccessTokenHubConnection(string apiKey)
+    {
         var hubUrl = new Uri(_http.BaseAddress!,
-            $"/hubs/federation?apiKey={Uri.EscapeDataString(apiKey)}{clientQuery}");
+            $"/hubs/federation?client=web&access_token={Uri.EscapeDataString(apiKey)}");
 
         return new HubConnectionBuilder()
             .WithUrl(hubUrl, options =>

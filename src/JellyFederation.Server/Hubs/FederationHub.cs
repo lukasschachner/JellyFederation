@@ -24,6 +24,7 @@ public partial class FederationHub : Hub
     private readonly FederationDbContext _db;
     private readonly ILogger<FederationHub> _logger;
     private readonly FileRequestNotifier _notifier;
+    private readonly WebSessionService _sessions;
     private readonly ServerConnectionTracker _tracker;
 
     /// <summary>
@@ -35,30 +36,43 @@ public partial class FederationHub : Hub
     public FederationHub(FederationDbContext db,
         ServerConnectionTracker tracker,
         FileRequestNotifier notifier,
+        WebSessionService sessions,
         ILogger<FederationHub> logger)
     {
         _db = db;
         _tracker = tracker;
         _notifier = notifier;
+        _sessions = sessions;
         _logger = logger;
     }
 
     /// <summary>
-    ///     Resolves the server from the query-string API key.
-    ///     Returns null if the key is missing or invalid.
+    ///     Resolves the server from the hub API key.
+    ///     Preferred transports pass the key via X-Api-Key or Authorization: Bearer.
+    ///     Browser SignalR clients may fall back to access_token because WebSocket APIs cannot set custom headers.
+    ///     The legacy apiKey query parameter is retained for backwards compatibility.
     /// </summary>
     private async Task<RegisteredServer?> AuthenticateAsync()
     {
         var http = Context.GetHttpContext();
-        var apiKey = http?.Request.Query["apiKey"].ToString();
+        var apiKey = ResolveApiKey(http);
+        RegisteredServer? server;
         if (string.IsNullOrEmpty(apiKey))
         {
-            LogHubAuthenticationMissingApiKey(_logger, Context.ConnectionId);
-            return null;
+            if (http is null)
+            {
+                LogHubAuthenticationMissingApiKey(_logger, Context.ConnectionId);
+                return null;
+            }
+
+            server = await _sessions.AuthenticateCookieAsync(http.Request, asTracking: true).ConfigureAwait(false);
+            if (server is null)
+                LogHubAuthenticationMissingApiKey(_logger, Context.ConnectionId);
+            return server;
         }
 
         // AsTracking required — server.IsOnline/LastSeenAt are mutated in OnConnectedAsync.
-        var server = await _db.Servers
+        server = await _db.Servers
             .AsTracking()
             .FirstOrDefaultAsync(s => s.ApiKey == apiKey).ConfigureAwait(false);
         if (server is null)
@@ -66,7 +80,39 @@ public partial class FederationHub : Hub
         return server;
     }
 
-    // Called by plugin on connect (after setting API key as query param)
+    private static string? ResolveApiKey(HttpContext? http)
+    {
+        if (http is null)
+            return null;
+
+        if (http.Request.Headers.TryGetValue("X-Api-Key", out var apiKeyHeader))
+        {
+            var apiKey = apiKeyHeader.ToString();
+            if (!string.IsNullOrWhiteSpace(apiKey))
+                return apiKey;
+        }
+
+        if (http.Request.Headers.TryGetValue("Authorization", out var authorizationHeader))
+        {
+            var authorization = authorizationHeader.ToString();
+            const string bearerPrefix = "Bearer ";
+            if (authorization.StartsWith(bearerPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                var bearerToken = authorization[bearerPrefix.Length..].Trim();
+                if (!string.IsNullOrWhiteSpace(bearerToken))
+                    return bearerToken;
+            }
+        }
+
+        var accessToken = http.Request.Query["access_token"].ToString();
+        if (!string.IsNullOrWhiteSpace(accessToken))
+            return accessToken;
+
+        var legacyApiKey = http.Request.Query["apiKey"].ToString();
+        return string.IsNullOrWhiteSpace(legacyApiKey) ? null : legacyApiKey;
+    }
+
+    // Called by plugin on connect.
     public override async Task OnConnectedAsync()
     {
         var server = await AuthenticateAsync().ConfigureAwait(false);

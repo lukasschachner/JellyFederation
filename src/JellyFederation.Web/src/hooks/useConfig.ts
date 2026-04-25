@@ -1,31 +1,25 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { Config } from '../api/types'
-
-const KEY = 'jf_config'
-
-function readConfig(): Config | null {
-  try {
-    const raw = localStorage.getItem(KEY)
-    return raw ? JSON.parse(raw) : null
-  } catch {
-    return null
-  }
-}
+import { CONFIG_CHANGED_EVENT, CONFIG_STORAGE_KEY, loadConfig } from '../lib/config'
 
 export function useConfig(): Config | null {
-  const [config, setConfig] = useState<Config | null>(readConfig)
+  const [config, setConfig] = useState<Config | null>(loadConfig)
 
   useEffect(() => {
-    function handleStorage(e: StorageEvent) {
-      if (e.key !== KEY) return
-      try {
-        setConfig(e.newValue ? JSON.parse(e.newValue) : null)
-      } catch {
-        setConfig(null)
-      }
+    function refreshConfig() {
+      setConfig(loadConfig())
     }
+
+    function handleStorage(e: StorageEvent) {
+      if (e.key === CONFIG_STORAGE_KEY) refreshConfig()
+    }
+
     window.addEventListener('storage', handleStorage)
-    return () => window.removeEventListener('storage', handleStorage)
+    window.addEventListener(CONFIG_CHANGED_EVENT, refreshConfig)
+    return () => {
+      window.removeEventListener('storage', handleStorage)
+      window.removeEventListener(CONFIG_CHANGED_EVENT, refreshConfig)
+    }
   }, [])
 
   return config

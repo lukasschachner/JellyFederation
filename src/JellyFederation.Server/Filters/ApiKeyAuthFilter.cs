@@ -17,15 +17,18 @@ public partial class ApiKeyAuthFilter : IAsyncActionFilter
     private readonly FederationDbContext _db;
     private readonly ErrorContractMapper _errorMapper;
     private readonly ILogger<ApiKeyAuthFilter> _logger;
+    private readonly WebSessionService _sessions;
 
     public ApiKeyAuthFilter(FederationDbContext db,
         IMemoryCache cache,
         ErrorContractMapper errorMapper,
+        WebSessionService sessions,
         ILogger<ApiKeyAuthFilter> logger)
     {
         _db = db;
         _cache = cache;
         _errorMapper = errorMapper;
+        _sessions = sessions;
         _logger = logger;
     }
 
@@ -43,38 +46,7 @@ public partial class ApiKeyAuthFilter : IAsyncActionFilter
             FederationTelemetry.SpanServerHttpRequest);
         FederationTelemetry.SetCommonTags(activity, "api.auth", "server", correlationId, releaseVersion: "server");
 
-        if (!context.HttpContext.Request.Headers.TryGetValue("X-Api-Key", out var key))
-        {
-            LogMissingApiKey(_logger, context.HttpContext.Request.Path);
-            FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
-            FederationMetrics.RecordOperation("api.auth", "server", FederationTelemetry.OutcomeError,
-                startedAt.Elapsed);
-            context.Result = ErrorContractMapper.ToActionResult(FailureDescriptor.Authorization(
-                "api.auth.missing_api_key",
-                "Missing API key.",
-                correlationId));
-            return;
-        }
-
-        var apiKey = key.ToString();
-        var cacheKey = $"apikey:{apiKey}";
-
-        if (!_cache.TryGetValue(cacheKey, out RegisteredServer? server))
-        {
-            LogApiKeyCacheMiss(_logger, context.HttpContext.Request.Path);
-            server = await _db.Servers
-                .AsNoTracking()
-                .FirstOrDefaultAsync(s => s.ApiKey == apiKey)
-                .ConfigureAwait(false);
-            if (server is not null)
-                _cache.Set(cacheKey, server, CacheTtl);
-        }
-        else
-        {
-            if (server is not null)
-                LogApiKeyCacheHit(_logger, context.HttpContext.Request.Path, server.Id);
-        }
-
+        var server = await AuthenticateAsync(context.HttpContext).ConfigureAwait(false);
         if (server is null)
         {
             LogApiKeyRejected(_logger, context.HttpContext.Request.Path);
@@ -82,8 +54,8 @@ public partial class ApiKeyAuthFilter : IAsyncActionFilter
             FederationMetrics.RecordOperation("api.auth", "server", FederationTelemetry.OutcomeError,
                 startedAt.Elapsed);
             context.Result = ErrorContractMapper.ToActionResult(FailureDescriptor.Authorization(
-                "api.auth.invalid_api_key",
-                "Invalid API key.",
+                "api.auth.invalid_credentials",
+                "Missing or invalid credentials.",
                 correlationId));
             return;
         }
@@ -102,5 +74,34 @@ public partial class ApiKeyAuthFilter : IAsyncActionFilter
 
         FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
         FederationMetrics.RecordOperation("api.auth", "server", FederationTelemetry.OutcomeSuccess, startedAt.Elapsed);
+    }
+
+    private async Task<RegisteredServer?> AuthenticateAsync(HttpContext context)
+    {
+        if (context.Request.Headers.TryGetValue("X-Api-Key", out var key) && !string.IsNullOrWhiteSpace(key))
+        {
+            var apiKey = key.ToString();
+            var cacheKey = $"apikey:{apiKey}";
+
+            if (!_cache.TryGetValue(cacheKey, out RegisteredServer? server))
+            {
+                LogApiKeyCacheMiss(_logger, context.Request.Path);
+                server = await _db.Servers
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(s => s.ApiKey == apiKey)
+                    .ConfigureAwait(false);
+                if (server is not null)
+                    _cache.Set(cacheKey, server, CacheTtl);
+            }
+            else if (server is not null)
+            {
+                LogApiKeyCacheHit(_logger, context.Request.Path, server.Id);
+            }
+
+            return server;
+        }
+
+        LogMissingApiKey(_logger, context.Request.Path);
+        return await _sessions.AuthenticateCookieAsync(context.Request).ConfigureAwait(false);
     }
 }

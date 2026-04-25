@@ -64,7 +64,11 @@ public partial class FederationSignalRService : IAsyncDisposable
         }
 
         _connection = new HubConnectionBuilder()
-            .WithUrl($"{config.FederationServerUrl.TrimEnd('/')}/hubs/federation?apiKey={config.ApiKey}&client=plugin")
+            .WithUrl($"{config.FederationServerUrl.TrimEnd('/')}/hubs/federation?client=plugin", options =>
+            {
+                options.Headers.Add("X-Api-Key", config.ApiKey);
+                options.AccessTokenProvider = () => Task.FromResult<string?>(config.ApiKey);
+            })
             .WithAutomaticReconnect()
             .Build();
 

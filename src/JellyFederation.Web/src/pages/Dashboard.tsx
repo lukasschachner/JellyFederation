@@ -22,8 +22,10 @@ function CopyButton({ value }: { value: string }) {
 
   return (
     <button
+      type="button"
       onClick={handleCopy}
       title="Copy API key"
+      aria-label="Copy API key"
       className="p-1 rounded hover:bg-white/10 transition-colors text-[var(--color-text)] hover:text-[var(--color-heading)] cursor-pointer"
     >
       {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
@@ -122,10 +124,18 @@ export function Dashboard({ connectionState }: DashboardProps) {
               </div>
               <div className="flex gap-2 text-xs items-center">
                 <span className="text-[var(--color-text)] w-16 shrink-0">API Key</span>
-                <code className="text-[var(--color-heading)] font-mono bg-white/5 px-1.5 py-0.5 rounded">
-                  {'•'.repeat(20)}
-                </code>
-                <CopyButton value={cfg?.apiKey ?? ''} />
+                {cfg?.apiKey ? (
+                  <>
+                    <code className="text-[var(--color-heading)] font-mono bg-white/5 px-1.5 py-0.5 rounded">
+                      {'•'.repeat(20)}
+                    </code>
+                    <CopyButton value={cfg.apiKey} />
+                  </>
+                ) : (
+                  <span className="text-[var(--color-heading)] bg-white/5 px-1.5 py-0.5 rounded">
+                    Stored in secure browser session
+                  </span>
+                )}
               </div>
             </div>
             <p className="text-xs text-[var(--color-text)] mt-3">
