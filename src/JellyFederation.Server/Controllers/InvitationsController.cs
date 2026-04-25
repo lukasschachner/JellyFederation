@@ -1,10 +1,9 @@
-using JellyFederation.Data;
 using JellyFederation.Server.Filters;
+using JellyFederation.Server.Pagination;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Dtos;
 using JellyFederation.Shared.Models;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 
 namespace JellyFederation.Server.Controllers;
 
@@ -13,83 +12,62 @@ namespace JellyFederation.Server.Controllers;
 [ServiceFilter(typeof(ApiKeyAuthFilter))]
 public partial class InvitationsController : AuthenticatedController
 {
-    private readonly FederationDbContext _db;
-    private readonly ErrorContractMapper _errorMapper;
+    private readonly InvitationService _invitations;
     private readonly ILogger<InvitationsController> _logger;
 
-    public InvitationsController(FederationDbContext db,
-        ErrorContractMapper errorMapper,
+    public InvitationsController(
+        InvitationService invitations,
         ILogger<InvitationsController> logger)
     {
-        _db = db;
-        _errorMapper = errorMapper;
+        _invitations = invitations;
         _logger = logger;
     }
 
     [HttpPost]
     public async Task<ActionResult<InvitationDto>> Send(
-        SendInvitationRequest request)
+        SendInvitationRequest request,
+        CancellationToken cancellationToken)
     {
         var fromServer = CurrentServer;
         LogInvitationSendRequested(_logger, fromServer.Id, request.ToServerId);
 
-        var toServer = await _db.Servers
-            .AsNoTracking()
-            .FirstOrDefaultAsync(s => s.Id == request.ToServerId)
+        var outcome = await _invitations.SendAsync(fromServer, request, CorrelationId, cancellationToken)
             .ConfigureAwait(false);
-        if (toServer is null)
+
+        if (outcome.IsFailure)
         {
-            LogInvitationTargetNotFound(_logger, fromServer.Id, request.ToServerId);
-            return ErrorContractMapper.ToActionResult(FailureDescriptor.NotFound(
-                "invitation.target_not_found",
-                "Target server not found.",
-                CorrelationId));
+            var failure = outcome.Failure!;
+            if (failure.Code == "invitation.target_not_found")
+                LogInvitationTargetNotFound(_logger, fromServer.Id, request.ToServerId);
+            else if (failure.Code == "invitation.relationship_exists")
+                LogInvitationRelationshipExists(_logger, fromServer.Id, request.ToServerId);
+
+            return ErrorContractMapper.ToActionResult(failure);
         }
 
-        var existingRelationship = await _db.Invitations.AnyAsync(i =>
-            ((i.FromServerId == fromServer.Id && i.ToServerId == toServer.Id) ||
-             (i.FromServerId == toServer.Id && i.ToServerId == fromServer.Id)) &&
-            (i.Status == InvitationStatus.Pending || i.Status == InvitationStatus.Accepted)).ConfigureAwait(false);
-
-        if (existingRelationship)
-        {
-            LogInvitationRelationshipExists(_logger, fromServer.Id, toServer.Id);
-            return ErrorContractMapper.ToActionResult(FailureDescriptor.Conflict(
-                "invitation.relationship_exists",
-                "A relationship already exists between these servers.",
-                CorrelationId));
-        }
-
-        var invitation = new Invitation
-        {
-            FromServerId = fromServer.Id,
-            ToServerId = toServer.Id
-        };
-
-        _db.Invitations.Add(invitation);
-        await _db.SaveChangesAsync().ConfigureAwait(false);
+        var invitation = outcome.RequireValue();
         LogInvitationCreated(_logger, invitation.Id, invitation.FromServerId, invitation.ToServerId);
-
-        return Ok(ToDto(invitation, fromServer.Name, toServer.Name));
+        return Ok(invitation);
     }
 
     [HttpGet]
-    public async Task<ActionResult<List<InvitationDto>>> List()
+    public async Task<ActionResult<List<InvitationDto>>> List(
+        [FromQuery] int page = PageRequest.DefaultPage,
+        [FromQuery] int pageSize = PageRequest.DefaultPageSize,
+        CancellationToken cancellationToken = default)
     {
+        if (PaginationHeaders.Validate(page, pageSize, "invitation.pagination.invalid", CorrelationId) is { } validationFailure)
+            return validationFailure;
+
+        var pageRequest = new PageRequest(page, pageSize);
         var server = CurrentServer;
 
-        var invitations = await _db.Invitations
-            .AsNoTracking()
-            .Where(i => i.FromServerId == server.Id || i.ToServerId == server.Id)
-            .Select(i => new InvitationDto(
-                i.Id,
-                i.FromServerId,
-                i.FromServer.Name,
-                i.ToServerId,
-                i.ToServer.Name,
-                i.Status,
-                i.CreatedAt))
-            .ToListAsync().ConfigureAwait(false);
+        var total = await _invitations.CountAsync(server, cancellationToken).ConfigureAwait(false);
+        PaginationHeaders.Add(Response, pageRequest, total);
+
+        var invitations = await _invitations
+            .ListAsync(server, pageRequest.Skip, pageRequest.PageSize, cancellationToken)
+            .ConfigureAwait(false);
         LogInvitationListReturned(_logger, server.Id, invitations.Count);
 
         return Ok(invitations);
@@ -98,71 +76,43 @@ public partial class InvitationsController : AuthenticatedController
     [HttpPut("{id}/respond")]
     public async Task<ActionResult<InvitationDto>> Respond(
         Guid id,
-        RespondToInvitationRequest request)
+        RespondToInvitationRequest request,
+        CancellationToken cancellationToken)
     {
         var server = CurrentServer;
+        var outcome = await _invitations.RespondAsync(server, id, request, CorrelationId, cancellationToken)
+            .ConfigureAwait(false);
 
-        // AsTracking required — invitation.Status is mutated and saved below.
-        var invitation = await _db.Invitations
-            .AsTracking()
-            .Include(i => i.FromServer)
-            .Include(i => i.ToServer)
-            .FirstOrDefaultAsync(i => i.Id == id && i.ToServerId == server.Id).ConfigureAwait(false);
-
-        if (invitation is null)
+        if (outcome.IsFailure)
         {
-            LogInvitationRespondNotFound(_logger, id, server.Id);
-            return ErrorContractMapper.ToActionResult(FailureDescriptor.NotFound(
-                "invitation.not_found",
-                "Invitation not found.",
-                CorrelationId));
+            var failure = outcome.Failure!;
+            if (failure.Code == "invitation.not_found")
+                LogInvitationRespondNotFound(_logger, id, server.Id);
+            else if (failure.Code == "invitation.not_pending")
+                LogInvitationRespondNotPending(_logger, id, InvitationStatus.Revoked);
+
+            return ErrorContractMapper.ToActionResult(failure);
         }
 
-        if (invitation.Status != InvitationStatus.Pending)
-        {
-            LogInvitationRespondNotPending(_logger, id, invitation.Status);
-            return ErrorContractMapper.ToActionResult(FailureDescriptor.Conflict(
-                "invitation.not_pending",
-                "Invitation is no longer pending.",
-                CorrelationId));
-        }
-
-        invitation.Status = request.Accept ? InvitationStatus.Accepted : InvitationStatus.Declined;
-        invitation.RespondedAt = DateTime.UtcNow;
-        await _db.SaveChangesAsync().ConfigureAwait(false);
+        var invitation = outcome.RequireValue();
         LogInvitationResponded(_logger, invitation.Id, server.Id, request.Accept);
-
-        return Ok(ToDto(invitation, invitation.FromServer.Name, invitation.ToServer.Name));
+        return Ok(invitation);
     }
 
     [HttpDelete("{id}")]
-    public async Task<IActionResult> Revoke(Guid id)
+    public async Task<IActionResult> Revoke(Guid id, CancellationToken cancellationToken)
     {
         var server = CurrentServer;
+        var outcome = await _invitations.RevokeAsync(server, id, CorrelationId, cancellationToken)
+            .ConfigureAwait(false);
 
-        // AsTracking required — invitation.Status is mutated and saved below.
-        var invitation = await _db.Invitations
-            .AsTracking()
-            .FirstOrDefaultAsync(i => i.Id == id && i.FromServerId == server.Id).ConfigureAwait(false);
-
-        if (invitation is null)
+        if (outcome.IsFailure)
         {
             LogInvitationRevokeNotFound(_logger, id, server.Id);
-            return ErrorContractMapper.ToActionResult(FailureDescriptor.NotFound(
-                "invitation.not_found",
-                "Invitation not found.",
-                CorrelationId));
+            return ErrorContractMapper.ToActionResult(outcome.Failure!);
         }
 
-        invitation.Status = InvitationStatus.Revoked;
-        await _db.SaveChangesAsync().ConfigureAwait(false);
-        LogInvitationRevoked(_logger, invitation.Id, server.Id);
-
+        LogInvitationRevoked(_logger, id, server.Id);
         return NoContent();
-    }
-
-    private static InvitationDto ToDto(Invitation i, string fromName, string toName)
-    {
-        return new InvitationDto(i.Id, i.FromServerId, fromName, i.ToServerId, toName, i.Status, i.CreatedAt);
     }
 }

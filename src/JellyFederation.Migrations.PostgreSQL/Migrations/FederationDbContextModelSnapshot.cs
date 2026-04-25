@@ -76,6 +76,10 @@ namespace JellyFederation.Migrations.PostgreSQL.Migrations
 
                     b.HasIndex("Status", "CreatedAt");
 
+                    b.HasIndex("OwningServerId", "CreatedAt", "Id");
+
+                    b.HasIndex("RequestingServerId", "CreatedAt", "Id");
+
                     b.ToTable("FileRequests");
                 });
 
@@ -105,6 +109,10 @@ namespace JellyFederation.Migrations.PostgreSQL.Migrations
                     b.HasIndex("FromServerId", "Status");
 
                     b.HasIndex("ToServerId", "Status");
+
+                    b.HasIndex("FromServerId", "CreatedAt", "Id");
+
+                    b.HasIndex("ToServerId", "CreatedAt", "Id");
 
                     b.ToTable("Invitations");
                 });
@@ -149,6 +157,11 @@ namespace JellyFederation.Migrations.PostgreSQL.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ServerId", "IndexedAt");
+
+                    b.HasIndex("ServerId", "JellyfinItemId")
+                        .IsUnique();
+
                     b.HasIndex("ServerId", "Title");
 
                     b.HasIndex("ServerId", "Type");
@@ -187,6 +200,8 @@ namespace JellyFederation.Migrations.PostgreSQL.Migrations
 
                     b.HasIndex("ApiKey")
                         .IsUnique();
+
+                    b.HasIndex("RegisteredAt", "Id");
 
                     b.ToTable("Servers");
                 });

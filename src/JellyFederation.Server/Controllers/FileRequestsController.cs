@@ -2,6 +2,7 @@ using System.Diagnostics;
 using JellyFederation.Data;
 using JellyFederation.Server.Filters;
 using JellyFederation.Server.Hubs;
+using JellyFederation.Server.Pagination;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Dtos;
 using JellyFederation.Shared.Models;
@@ -126,16 +127,31 @@ public partial class FileRequestsController : AuthenticatedController
     }
 
     [HttpGet]
-    public async Task<ActionResult<List<FileRequestDto>>> List()
+    public async Task<ActionResult<List<FileRequestDto>>> List(
+        [FromQuery] int page = PageRequest.DefaultPage,
+        [FromQuery] int pageSize = PageRequest.DefaultPageSize,
+        CancellationToken cancellationToken = default)
     {
+        if (PaginationHeaders.Validate(page, pageSize, "file_request.pagination.invalid", CorrelationId) is { } validationFailure)
+            return validationFailure;
+
+        var pageRequest = new PageRequest(page, pageSize);
         var server = CurrentServer;
+
+        var query = _db.FileRequests
+            .AsNoTracking()
+            .Where(r => r.RequestingServerId == server.Id || r.OwningServerId == server.Id);
+
+        var total = await query.CountAsync(cancellationToken).ConfigureAwait(false);
+        PaginationHeaders.Add(Response, pageRequest, total);
 
         // Project to an anonymous type to avoid loading full tracked server entities.
         // r.RequestingServer.Name and r.OwningServer.Name are translated to JOINs by EF Core.
-        var requests = await _db.FileRequests
-            .AsNoTracking()
-            .Where(r => r.RequestingServerId == server.Id || r.OwningServerId == server.Id)
+        var requests = await query
             .OrderByDescending(r => r.CreatedAt)
+            .ThenBy(r => r.Id)
+            .Skip(pageRequest.Skip)
+            .Take(pageRequest.PageSize)
             .Select(r => new
             {
                 r.Id,
@@ -152,7 +168,7 @@ public partial class FileRequestsController : AuthenticatedController
                 r.FailureReason,
                 r.CreatedAt
             })
-            .ToListAsync().ConfigureAwait(false);
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
 
         var itemIds = requests.Select(r => r.JellyfinItemId).Distinct().ToList();
         var ownerIds = requests.Select(r => r.OwningServerId).Distinct().ToList();
@@ -162,7 +178,7 @@ public partial class FileRequestsController : AuthenticatedController
                 .AsNoTracking()
                 .Where(m => ownerIds.Contains(m.ServerId) && itemIds.Contains(m.JellyfinItemId))
                 .Select(m => new { m.ServerId, m.JellyfinItemId, m.Title })
-                .ToDictionaryAsync(m => (m.ServerId, m.JellyfinItemId), m => m.Title)
+                .ToDictionaryAsync(m => (m.ServerId, m.JellyfinItemId), m => m.Title, cancellationToken)
                 .ConfigureAwait(false);
         LogListReturned(_logger, server.Id, requests.Count);
 

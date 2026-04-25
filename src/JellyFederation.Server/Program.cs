@@ -5,6 +5,7 @@ using System.Text.Json.Serialization;
 using JellyFederation.Data;
 using JellyFederation.Server.Filters;
 using JellyFederation.Server.Hubs;
+using JellyFederation.Server.Options;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Models;
 using JellyFederation.Shared.Telemetry;
@@ -12,6 +13,7 @@ using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -56,7 +58,7 @@ builder.Logging.AddOpenTelemetry(logging =>
         logging.AddOtlpExporter(options => options.Endpoint = endpoint);
 });
 
-var maxRequestBodySizeMb = builder.Configuration.GetValue<long?>("ServerLimits:MaxRequestBodySizeMb") ?? 100;
+var maxRequestBodySizeMb = builder.Configuration.GetValue<long?>("ServerLimits:MaxRequestBodySizeMb") ?? 10;
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.MaxRequestBodySize = maxRequestBodySizeMb * 1024L * 1024L;
@@ -89,6 +91,36 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+builder.Services.AddOptions<SecurityOptions>()
+    .Bind(builder.Configuration.GetSection(SecurityOptions.SectionName))
+    .PostConfigure(options =>
+    {
+        if (string.IsNullOrWhiteSpace(options.AdminToken))
+            options.AdminToken = builder.Configuration["AdminToken"] ?? string.Empty;
+    })
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<SecurityOptions>, SecurityOptionsValidator>();
+
+builder.Services.AddOptions<CorsOptions>()
+    .Bind(builder.Configuration.GetSection(CorsOptions.SectionName))
+    .PostConfigure(options =>
+    {
+        if (options.AllowedOrigins.Length == 0)
+            options.AllowedOrigins = builder.Configuration.GetSection("AllowedOrigins").Get<string[]>() ?? [];
+    })
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<CorsOptions>, CorsOptionsValidator>();
+
+builder.Services.AddOptions<WebSessionOptions>()
+    .Bind(builder.Configuration.GetSection(WebSessionOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<WebSessionOptions>, WebSessionOptionsValidator>();
+
+builder.Services.AddOptions<RateLimitOptions>()
+    .Bind(builder.Configuration.GetSection(RateLimitOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+
 var dbProvider = builder.Configuration.GetValue<string>("Database:Provider") ?? "Sqlite";
 var connStr = builder.Configuration.GetConnectionString("Default");
 
@@ -116,6 +148,7 @@ builder.Services.AddSignalR(options =>
 });
 builder.Services.AddMemoryCache();
 builder.Services.AddDataProtection();
+builder.Services.AddFederationWorkflowServices();
 builder.Services.AddScoped<WebSessionService>();
 builder.Services.AddSingleton<ServerConnectionTracker>();
 builder.Services.AddSingleton<FileRequestNotifier>();
@@ -189,11 +222,14 @@ builder.Services.AddRateLimiter(options =>
 });
 
 // CORS: allow the frontend dev server and any configured origin.
-// In production, set AllowedOrigins in appsettings.json.
+// In production, set Cors:AllowedOrigins in appsettings.json or environment variables.
 var allowedOrigins = builder.Configuration
-                         .GetSection("AllowedOrigins")
-                         .Get<string[]>()
-                     ?? ["http://localhost:5173", "http://localhost:4173"];
+                         .GetSection(CorsOptions.SectionName)
+                         .Get<CorsOptions>()
+                         ?.AllowedOrigins is { Length: > 0 } configuredOrigins
+    ? configuredOrigins
+    : builder.Configuration.GetSection("AllowedOrigins").Get<string[]>()
+      ?? ["http://localhost:5173", "http://localhost:4173"];
 
 builder.Services.AddCors(opt => opt.AddDefaultPolicy(policy =>
     policy.WithOrigins(allowedOrigins)
@@ -203,10 +239,18 @@ builder.Services.AddCors(opt => opt.AddDefaultPolicy(policy =>
 
 var app = builder.Build();
 
-using (var scope = app.Services.CreateScope())
+var autoMigrate = builder.Configuration.GetValue<bool?>("Database:AutoMigrate")
+                  ?? !app.Environment.IsProduction();
+if (autoMigrate)
 {
+    using var scope = app.Services.CreateScope();
     var db = scope.ServiceProvider.GetRequiredService<FederationDbContext>();
     db.Database.Migrate();
+}
+else
+{
+    app.Logger.LogInformation(
+        "Database auto-migration is disabled. Apply migrations with the provider-specific migration job or dotnet ef before starting the production web app.");
 }
 
 if (app.Environment.IsDevelopment())

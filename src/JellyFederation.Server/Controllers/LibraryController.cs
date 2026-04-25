@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using JellyFederation.Data;
 using JellyFederation.Server.Filters;
+using JellyFederation.Server.Pagination;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Dtos;
 using JellyFederation.Shared.Models;
@@ -15,6 +16,9 @@ namespace JellyFederation.Server.Controllers;
 [ServiceFilter(typeof(ApiKeyAuthFilter))]
 public partial class LibraryController : AuthenticatedController
 {
+    private const int SyncBatchSize = 500;
+    private const int LibrarySyncRequestSizeLimitBytes = 100 * 1024 * 1024;
+
     private readonly FederationDbContext _db;
     private readonly ErrorContractMapper _errorMapper;
     private readonly ILogger<LibraryController> _logger;
@@ -34,7 +38,8 @@ public partial class LibraryController : AuthenticatedController
     ///     Preserves existing IsRequestable flags -- sync only updates metadata.
     /// </summary>
     [HttpPost("sync")]
-    public async Task<IActionResult> Sync(SyncMediaRequest request)
+    [RequestSizeLimit(LibrarySyncRequestSizeLimitBytes)]
+    public async Task<IActionResult> Sync(SyncMediaRequest request, CancellationToken cancellationToken = default)
     {
         var startedAt = Stopwatch.StartNew();
         using var activity = FederationTelemetry.ServerActivitySource.StartActivity(
@@ -46,61 +51,83 @@ public partial class LibraryController : AuthenticatedController
         var server = CurrentServer;
         LogSyncStarted(_logger, server.Id, request.Items.Count, request.ReplaceAll);
 
-        // Differential sync: update changed items, add new ones, remove stale ones
-        // AsTracking required — items in this dictionary are mutated then saved via SaveChangesAsync.
-        var existing = await _db.MediaItems
-            .AsTracking()
-            .Where(m => m.ServerId == server.Id)
-            .ToDictionaryAsync(m => m.JellyfinItemId).ConfigureAwait(false);
+        var incomingIds = new HashSet<string>(request.Items.Count, StringComparer.Ordinal);
+        foreach (var item in request.Items)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!incomingIds.Add(item.JellyfinItemId))
+            {
+                FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeError);
+                FederationMetrics.RecordOperation("library.sync", "server", FederationTelemetry.OutcomeError,
+                    startedAt.Elapsed, failureCategory: FailureCategory.Validation.ToString(),
+                    failureCode: "library.sync.duplicate_item");
+                return ErrorContractMapper.ToActionResult(FailureDescriptor.Validation(
+                    "library.sync.duplicate_item",
+                    "Sync payload contains duplicate media item identifiers.",
+                    CorrelationId));
+            }
+        }
 
-        var incomingIds = new HashSet<string>(request.Items.Count);
+        var syncStartedAt = DateTime.UtcNow;
         var updatedCount = 0;
         var addedCount = 0;
 
-        foreach (var item in request.Items)
+        foreach (var batch in request.Items.Chunk(SyncBatchSize))
         {
-            incomingIds.Add(item.JellyfinItemId);
+            cancellationToken.ThrowIfCancellationRequested();
+            var batchIds = batch.Select(i => i.JellyfinItemId).ToArray();
 
-            if (existing.TryGetValue(item.JellyfinItemId, out var dbItem))
+            // Bound tracking to the current batch rather than all media rows for the server.
+            var existing = await _db.MediaItems
+                .AsTracking()
+                .Where(m => m.ServerId == server.Id && batchIds.Contains(m.JellyfinItemId))
+                .ToDictionaryAsync(m => m.JellyfinItemId, StringComparer.Ordinal, cancellationToken)
+                .ConfigureAwait(false);
+
+            foreach (var item in batch)
             {
-                // Update changed metadata fields, preserve IsRequestable
-                dbItem.Title = item.Title;
-                dbItem.Type = item.Type;
-                dbItem.Year = item.Year;
-                dbItem.Overview = item.Overview;
-                dbItem.ImageUrl = item.ImageUrl;
-                dbItem.FileSizeBytes = item.FileSizeBytes;
-                updatedCount++;
-            }
-            else
-            {
-                // New item
-                _db.MediaItems.Add(new MediaItem
+                if (existing.TryGetValue(item.JellyfinItemId, out var dbItem))
                 {
-                    ServerId = server.Id,
-                    JellyfinItemId = item.JellyfinItemId,
-                    Title = item.Title,
-                    Type = item.Type,
-                    Year = item.Year,
-                    Overview = item.Overview,
-                    ImageUrl = item.ImageUrl,
-                    FileSizeBytes = item.FileSizeBytes,
-                    IsRequestable = true
-                });
-                addedCount++;
+                    // Update changed metadata fields, preserve IsRequestable.
+                    dbItem.Title = item.Title;
+                    dbItem.Type = item.Type;
+                    dbItem.Year = item.Year;
+                    dbItem.Overview = item.Overview;
+                    dbItem.ImageUrl = item.ImageUrl;
+                    dbItem.FileSizeBytes = item.FileSizeBytes;
+                    dbItem.IndexedAt = syncStartedAt;
+                    updatedCount++;
+                }
+                else
+                {
+                    _db.MediaItems.Add(new MediaItem
+                    {
+                        ServerId = server.Id,
+                        JellyfinItemId = item.JellyfinItemId,
+                        Title = item.Title,
+                        Type = item.Type,
+                        Year = item.Year,
+                        Overview = item.Overview,
+                        ImageUrl = item.ImageUrl,
+                        FileSizeBytes = item.FileSizeBytes,
+                        IsRequestable = true,
+                        IndexedAt = syncStartedAt
+                    });
+                    addedCount++;
+                }
             }
+
+            await _db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            _db.ChangeTracker.Clear();
         }
 
         var removedCount = 0;
         if (request.ReplaceAll)
-        {
-            // Remove items that no longer exist in Jellyfin
-            var staleItems = existing.Values.Where(m => !incomingIds.Contains(m.JellyfinItemId)).ToList();
-            removedCount = staleItems.Count;
-            _db.MediaItems.RemoveRange(staleItems);
-        }
+            removedCount = await _db.MediaItems
+                .Where(m => m.ServerId == server.Id && m.IndexedAt < syncStartedAt)
+                .ExecuteDeleteAsync(cancellationToken)
+                .ConfigureAwait(false);
 
-        await _db.SaveChangesAsync().ConfigureAwait(false);
         LogSyncCompleted(_logger, server.Id, request.Items.Count, addedCount, updatedCount, removedCount);
         FederationTelemetry.SetOutcome(activity, FederationTelemetry.OutcomeSuccess);
         FederationMetrics.RecordOperation("library.sync", "server", FederationTelemetry.OutcomeSuccess,
@@ -296,16 +323,8 @@ public partial class LibraryController : AuthenticatedController
         return query;
     }
 
-    private ObjectResult? TryValidatePagination(int page, int pageSize)
-    {
-        if (page >= 1 && pageSize is >= 1 and <= 500)
-            return null;
-
-        return ErrorContractMapper.ToActionResult(FailureDescriptor.Validation(
-            "library.pagination.invalid",
-            "Invalid pagination parameters. page must be >= 1 and pageSize must be between 1 and 500.",
-            CorrelationId));
-    }
+    private ObjectResult? TryValidatePagination(int page, int pageSize) =>
+        PaginationHeaders.Validate(page, pageSize, "library.pagination.invalid", CorrelationId);
 
     private static IQueryable<MediaItem> ApplyTitleSearch(IQueryable<MediaItem> query, string? search)
     {

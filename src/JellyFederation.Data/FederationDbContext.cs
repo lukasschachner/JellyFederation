@@ -20,6 +20,7 @@ public class FederationDbContext : DbContext
         {
             e.HasKey(s => s.Id);
             e.HasIndex(s => s.ApiKey).IsUnique();
+            e.HasIndex(s => new { s.RegisteredAt, s.Id });
             e.HasMany(s => s.MediaItems)
                 .WithOne(m => m.Server)
                 .HasForeignKey(m => m.ServerId)
@@ -36,14 +37,18 @@ public class FederationDbContext : DbContext
 
         modelBuilder.Entity<MediaItem>(e =>
         {
+            e.HasIndex(m => new { m.ServerId, m.JellyfinItemId }).IsUnique();
             e.HasIndex(m => new { m.ServerId, m.Type });
             e.HasIndex(m => new { m.ServerId, m.Title });
+            e.HasIndex(m => new { m.ServerId, m.IndexedAt });
         });
 
         modelBuilder.Entity<Invitation>(e =>
         {
             e.HasIndex(i => new { i.FromServerId, i.Status });
             e.HasIndex(i => new { i.ToServerId, i.Status });
+            e.HasIndex(i => new { i.FromServerId, i.CreatedAt, i.Id });
+            e.HasIndex(i => new { i.ToServerId, i.CreatedAt, i.Id });
         });
 
         modelBuilder.Entity<FileRequest>(e =>
@@ -59,6 +64,8 @@ public class FederationDbContext : DbContext
             e.HasIndex(r => new { r.RequestingServerId, r.Status });
             e.HasIndex(r => new { r.OwningServerId, r.Status });
             e.HasIndex(r => new { r.Status, r.CreatedAt });
+            e.HasIndex(r => new { r.RequestingServerId, r.CreatedAt, r.Id });
+            e.HasIndex(r => new { r.OwningServerId, r.CreatedAt, r.Id });
         });
     }
 }

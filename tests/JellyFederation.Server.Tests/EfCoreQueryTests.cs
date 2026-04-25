@@ -200,19 +200,53 @@ public sealed class EfCoreQueryTests
     }
 
     [Fact]
+    public async Task MediaItems_EnforceUniqueJellyfinItemIdPerServer()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        await using var database = await SqliteTestDatabase.CreateAsync(cancellationToken);
+        await using var db = database.CreateContext();
+        var server = CreateServer("unique-media-server");
+        db.Servers.Add(server);
+        db.MediaItems.AddRange(
+            new MediaItem
+            {
+                ServerId = server.Id,
+                JellyfinItemId = "same-item",
+                Title = "First",
+                Type = MediaType.Movie
+            },
+            new MediaItem
+            {
+                ServerId = server.Id,
+                JellyfinItemId = "same-item",
+                Title = "Second",
+                Type = MediaType.Movie
+            });
+
+        await Assert.ThrowsAnyAsync<DbUpdateException>(() => db.SaveChangesAsync(cancellationToken));
+    }
+
+    [Fact]
     public async Task ModelMetadata_ContainsImportantQueryIndexes()
     {
         await using var database = await SqliteTestDatabase.CreateAsync(TestContext.Current.CancellationToken);
         await using var db = database.CreateContext();
 
         AssertIndex<RegisteredServer>(db, isUnique: true, nameof(RegisteredServer.ApiKey));
+        AssertIndex<RegisteredServer>(db, isUnique: false, nameof(RegisteredServer.RegisteredAt), nameof(RegisteredServer.Id));
+        AssertIndex<MediaItem>(db, isUnique: true, nameof(MediaItem.ServerId), nameof(MediaItem.JellyfinItemId));
         AssertIndex<MediaItem>(db, isUnique: false, nameof(MediaItem.ServerId), nameof(MediaItem.Type));
         AssertIndex<MediaItem>(db, isUnique: false, nameof(MediaItem.ServerId), nameof(MediaItem.Title));
+        AssertIndex<MediaItem>(db, isUnique: false, nameof(MediaItem.ServerId), nameof(MediaItem.IndexedAt));
         AssertIndex<Invitation>(db, isUnique: false, nameof(Invitation.FromServerId), nameof(Invitation.Status));
         AssertIndex<Invitation>(db, isUnique: false, nameof(Invitation.ToServerId), nameof(Invitation.Status));
+        AssertIndex<Invitation>(db, isUnique: false, nameof(Invitation.FromServerId), nameof(Invitation.CreatedAt), nameof(Invitation.Id));
+        AssertIndex<Invitation>(db, isUnique: false, nameof(Invitation.ToServerId), nameof(Invitation.CreatedAt), nameof(Invitation.Id));
         AssertIndex<FileRequest>(db, isUnique: false, nameof(FileRequest.RequestingServerId), nameof(FileRequest.Status));
         AssertIndex<FileRequest>(db, isUnique: false, nameof(FileRequest.OwningServerId), nameof(FileRequest.Status));
         AssertIndex<FileRequest>(db, isUnique: false, nameof(FileRequest.Status), nameof(FileRequest.CreatedAt));
+        AssertIndex<FileRequest>(db, isUnique: false, nameof(FileRequest.RequestingServerId), nameof(FileRequest.CreatedAt), nameof(FileRequest.Id));
+        AssertIndex<FileRequest>(db, isUnique: false, nameof(FileRequest.OwningServerId), nameof(FileRequest.CreatedAt), nameof(FileRequest.Id));
     }
 
     private static async Task SyncSingleItemAsync(

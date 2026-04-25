@@ -1,5 +1,6 @@
 using JellyFederation.Data;
 using JellyFederation.Server.Filters;
+using JellyFederation.Server.Pagination;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Dtos;
 using JellyFederation.Shared.Models;
@@ -63,13 +64,28 @@ public partial class ServersController : ControllerBase
 
     [HttpGet]
     [ServiceFilter(typeof(ApiKeyAuthFilter))]
-    public async Task<ActionResult<List<ServerInfoDto>>> List()
+    public async Task<ActionResult<List<ServerInfoDto>>> List(
+        [FromQuery] int page = PageRequest.DefaultPage,
+        [FromQuery] int pageSize = PageRequest.DefaultPageSize,
+        CancellationToken cancellationToken = default)
     {
-        var servers = await _db.Servers
-            .AsNoTracking()
+        if (PaginationHeaders.Validate(page, pageSize, "server.pagination.invalid", correlationId: string.Empty) is { } validationFailure)
+            return validationFailure;
+
+        var pageRequest = new PageRequest(page, pageSize);
+        var query = _db.Servers.AsNoTracking();
+
+        var total = await query.CountAsync(cancellationToken).ConfigureAwait(false);
+        PaginationHeaders.Add(Response, pageRequest, total);
+
+        var servers = await query
+            .OrderByDescending(s => s.RegisteredAt)
+            .ThenBy(s => s.Id)
             .Select(s => new ServerInfoDto(
                 s.Id, s.Name, s.OwnerUserId, s.IsOnline, s.LastSeenAt, s.MediaItems.Count))
-            .ToListAsync().ConfigureAwait(false);
+            .Skip(pageRequest.Skip)
+            .Take(pageRequest.PageSize)
+            .ToListAsync(cancellationToken).ConfigureAwait(false);
         LogListedServers(_logger, servers.Count);
 
         return Ok(servers);
