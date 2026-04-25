@@ -1,0 +1,64 @@
+name: "Dependency and Supply Chain"
+
+on:
+  pull_request:
+    branches: [main, master]
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            9.0.x
+            10.0.x
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src/JellyFederation.Web/package-lock.json
+
+      - name: Restore NuGet packages
+        run: dotnet restore JellyFederation.slnx
+
+      - name: Audit NuGet vulnerabilities
+        run: dotnet list JellyFederation.slnx package --vulnerable --include-transitive
+
+      - name: Install frontend dependencies
+        working-directory: src/JellyFederation.Web
+        run: npm ci
+
+      - name: Audit frontend dependencies
+        working-directory: src/JellyFederation.Web
+        run: npm audit --audit-level=moderate
+
+      - name: Build frontend
+        working-directory: src/JellyFederation.Web
+        run: npm run build
+
+  repository-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report tracked generated and local files
+        run: |
+          set -euo pipefail
+          if git ls-files | rg '(^|/)(bin|obj|node_modules|dist|coverage|TestResults|docs/_site|\.vs|\.vscode|\.idea)/|\.(db|sqlite|sqlite3)$|\.env'; then
+            echo "::warning::Tracked generated/local files found. Remove accidental files or document intentional fixtures."
+          fi
+
+      - name: Secret scan
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect \
+            --source=/repo \
+            --redact \
+            --verbose \
+            --no-git

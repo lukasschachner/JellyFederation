@@ -9,6 +9,7 @@ on:
       - "src/JellyFederation.Data/**"
       - "src/JellyFederation.Migrations.Sqlite/**"
       - "src/JellyFederation.Migrations.PostgreSQL/**"
+      - "src/JellyFederation.Web/**"
       - ".github/workflows/docker.yaml"
   release:
     types: [published]
@@ -23,6 +24,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      security-events: write
 
     steps:
       - uses: actions/checkout@v4
@@ -44,6 +46,25 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}},enable=${{ github.event_name == 'release' }}
 
+      - name: Resolve base image digests
+        id: bases
+        shell: bash
+        run: |
+          set -euo pipefail
+          resolve() {
+            local image="$1"
+            local digest
+            digest="$(docker buildx imagetools inspect "$image" | awk '/Digest:/ { print $2; exit }')"
+            if [ -z "$digest" ]; then
+              echo "Failed to resolve digest for $image" >&2
+              exit 1
+            fi
+            echo "${image}@${digest}"
+          }
+          echo "node_image=$(resolve node:22-alpine)" >> "$GITHUB_OUTPUT"
+          echo "dotnet_sdk_image=$(resolve mcr.microsoft.com/dotnet/sdk:10.0)" >> "$GITHUB_OUTPUT"
+          echo "dotnet_aspnet_image=$(resolve mcr.microsoft.com/dotnet/aspnet:10.0)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -52,3 +73,30 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            NODE_IMAGE=${{ steps.bases.outputs.node_image }}
+            DOTNET_SDK_IMAGE=${{ steps.bases.outputs.dotnet_sdk_image }}
+            DOTNET_ASPNET_IMAGE=${{ steps.bases.outputs.dotnet_aspnet_image }}
+
+      - name: Select primary image tag
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "ref=$(printf '%s\n' '${{ steps.meta.outputs.tags }}' | head -n 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Generate image SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.image.outputs.ref }}
+          artifact-name: jellyfederation-server.spdx.json
+          output-file: jellyfederation-server.spdx.json
+
+      - name: Scan image vulnerabilities
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: ${{ steps.image.outputs.ref }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

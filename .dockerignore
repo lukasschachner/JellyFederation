@@ -7,5 +7,15 @@ obj/
 dist/
 build/
 coverage/
+TestResults/
+docs/_site/
+.vs/
+.vscode/
+.idea/
 *.log*
 .env*
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3

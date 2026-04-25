@@ -5,8 +5,14 @@ node_modules/
 dist/
 build/
 coverage/
+TestResults/
 *.log
 .env*
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
 *.user
 *.suo
 *.tmp
