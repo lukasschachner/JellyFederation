@@ -86,6 +86,8 @@ public partial class WebRtcTransportService
             {
                 try
                 {
+                    await ReportWebRtcTransferStartedAsync(fileRequestId, connection, cts.Token)
+                        .ConfigureAwait(false);
                     await _fileTransfer.SendDataChannelAsync(fileRequestId, jellyfinItemId, dc, config, cts.Token)
                         .ConfigureAwait(false);
                 }
@@ -169,6 +171,8 @@ public partial class WebRtcTransportService
                 {
                     try
                     {
+                        await ReportWebRtcTransferStartedAsync(fileRequestId, connection, cts.Token)
+                            .ConfigureAwait(false);
                         await _fileTransfer.ReceiveDataChannelAsync(fileRequestId, dc, config, connection, cts.Token)
                             .ConfigureAwait(false);
                     }
@@ -417,6 +421,19 @@ public partial class WebRtcTransportService
         var config = _configProvider.GetConfiguration();
         await TriggerRelayReceiveAsync(message.FileRequestId, connection, config, CancellationToken.None)
             .ConfigureAwait(false);
+    }
+
+    private async Task ReportWebRtcTransferStartedAsync(Guid fileRequestId, HubConnection connection, CancellationToken ct)
+    {
+        try
+        {
+            await connection.SendAsync("ReportHolePunchResult", new HolePunchResult(fileRequestId, true, null), ct)
+                .ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            LogReportWebRtcStartedFailed(_logger, ex, fileRequestId);
+        }
     }
 
     private RTCPeerConnection CreatePeerConnection(PluginConfiguration config)

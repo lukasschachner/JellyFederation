@@ -73,4 +73,7 @@ public partial class WebRtcTransportService
 
     [LoggerMessage(19, LogLevel.Debug, "ICE session cleaned up for request {FileRequestId}")]
     private static partial void LogSessionCleaned(ILogger logger, Guid fileRequestId);
+
+    [LoggerMessage(20, LogLevel.Warning, "Failed to report WebRTC transfer start for request {FileRequestId}")]
+    private static partial void LogReportWebRtcStartedFailed(ILogger logger, Exception ex, Guid fileRequestId);
 }
