@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace JellyFederation.Server.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("[controller]")]
 public sealed class SessionsController : ControllerBase
 {
     private readonly FederationDbContext _db;

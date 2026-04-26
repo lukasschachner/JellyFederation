@@ -3,26 +3,33 @@ using System.Net;
 using System.Reflection;
 using System.Text.Json.Serialization;
 using JellyFederation.Data;
-using JellyFederation.Server.Filters;
+using JellyFederation.Server.Auth;
 using JellyFederation.Server.Hubs;
 using JellyFederation.Server.Options;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Models;
 using JellyFederation.Shared.Telemetry;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Microsoft.OpenApi;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Scalar.AspNetCore;
 using Serilog;
 using Serilog.Sinks.OpenTelemetry;
 
 var builder = WebApplication.CreateBuilder(args);
 
 const int SignalRMaximumReceiveMessageSize = 128 * 1024;
+const string OpenApiRoutePattern = "/openapi/{documentName}.json";
+const string ScalarEndpointPrefix = "/docs";
+const string ScalarTitle = "JellyFederation API Reference";
 
 var telemetrySection = builder.Configuration.GetSection("Telemetry");
 var telemetryServiceName = telemetrySection.GetValue<string>("ServiceName") ?? "jellyfederation-server";
@@ -92,8 +99,58 @@ builder.Services.Configure<ApiBehaviorOptions>(options =>
             details));
     };
 });
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddOpenApi(options =>
+{
+    options.OpenApiVersion = OpenApiSpecVersion.OpenApi3_1;
+
+    options.AddDocumentTransformer((document, _, _) =>
+    {
+        document.Components ??= new OpenApiComponents();
+        document.Components.SecuritySchemes ??= new Dictionary<string, IOpenApiSecurityScheme>();
+
+        document.Components.SecuritySchemes["ApiKey"] = new OpenApiSecurityScheme
+        {
+            Type = SecuritySchemeType.ApiKey,
+            Name = "X-Api-Key",
+            In = ParameterLocation.Header,
+            Description = "Federation API key."
+        };
+
+        document.Components.SecuritySchemes["WebSessionCookie"] = new OpenApiSecurityScheme
+        {
+            Type = SecuritySchemeType.ApiKey,
+            Name = WebSessionService.CookieName,
+            In = ParameterLocation.Cookie,
+            Description = "Web session cookie for browser clients."
+        };
+
+        return Task.CompletedTask;
+    });
+
+    options.AddOperationTransformer((operation, context, _) =>
+    {
+        var endpointMetadata = context.Description.ActionDescriptor.EndpointMetadata;
+        var allowsAnonymous = endpointMetadata.OfType<IAllowAnonymous>().Any();
+        if (allowsAnonymous)
+            return Task.CompletedTask;
+
+        var requiresAuthorization = endpointMetadata.OfType<IAuthorizeData>().Any();
+        if (!requiresAuthorization)
+            return Task.CompletedTask;
+
+        operation.Security ??= [];
+        operation.Security.Add(new OpenApiSecurityRequirement
+        {
+            [new OpenApiSecuritySchemeReference("ApiKey", context.Document, null)] = []
+        });
+        operation.Security.Add(new OpenApiSecurityRequirement
+        {
+            [new OpenApiSecuritySchemeReference("WebSessionCookie", context.Document, null)] = []
+        });
+
+        return Task.CompletedTask;
+    });
+});
 
 builder.Services.AddOptions<SecurityOptions>()
     .Bind(builder.Configuration.GetSection(SecurityOptions.SectionName))
@@ -152,13 +209,23 @@ builder.Services.AddSignalR(options =>
 });
 builder.Services.AddMemoryCache();
 builder.Services.AddDataProtection();
+builder.Services
+    .AddAuthentication(options =>
+    {
+        options.DefaultAuthenticateScheme = FederationAuthSchemes.ApiKeyOrSession;
+        options.DefaultChallengeScheme = FederationAuthSchemes.ApiKeyOrSession;
+        options.DefaultForbidScheme = FederationAuthSchemes.ApiKeyOrSession;
+    })
+    .AddScheme<AuthenticationSchemeOptions, FederationApiKeyAuthenticationHandler>(
+        FederationAuthSchemes.ApiKeyOrSession,
+        _ => { });
+builder.Services.AddAuthorization();
 builder.Services.AddFederationWorkflowServices();
 builder.Services.AddScoped<WebSessionService>();
 builder.Services.AddSingleton<ServerConnectionTracker>();
 builder.Services.AddSingleton<FileRequestNotifier>();
 builder.Services.AddSingleton<ErrorContractMapper>();
 builder.Services.AddSingleton<SignalRErrorMapper>();
-builder.Services.AddScoped<ApiKeyAuthFilter>();
 builder.Services.AddHostedService<StaleRequestCleanupService>();
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(resource => resource.AddService(telemetryServiceName, serviceVersion: releaseVersion))
@@ -259,8 +326,15 @@ else
 
 if (app.Environment.IsDevelopment())
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
+    app.MapOpenApi(OpenApiRoutePattern);
+    app.MapScalarApiReference(ScalarEndpointPrefix, options =>
+    {
+        options.ShowDeveloperTools = DeveloperToolsVisibility.Never;
+        options.WithTitle(ScalarTitle);
+        options.WithTheme(ScalarTheme.Default);
+        options.WithOpenApiRoutePattern(OpenApiRoutePattern);
+        options.AddPreferredSecuritySchemes(["ApiKey"]);
+    });
 }
 
 app.UseForwardedHeaders();
@@ -288,11 +362,13 @@ app.Use(async (context, next) =>
 
     await next().ConfigureAwait(false);
 });
-// HTTPS is terminated by Traefik — no redirect needed inside the container
+
 app.UseRateLimiter();
 app.UseStaticFiles(); // serve JS/CSS/assets before routing touches the request
-app.UseCors(); // must come before MapControllers / MapHub
-app.MapControllers();
+app.UseCors(); // must come before auth and endpoint mapping
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapGroup("/api").MapControllers();
 app.MapHub<FederationHub>("/hubs/federation");
 app.MapFallbackToFile("index.html"); // SPA fallback for client-side routes
 

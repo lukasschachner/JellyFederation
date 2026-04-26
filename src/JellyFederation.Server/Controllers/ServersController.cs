@@ -1,9 +1,10 @@
 using JellyFederation.Data;
-using JellyFederation.Server.Filters;
+using JellyFederation.Server.Auth;
 using JellyFederation.Server.Pagination;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Dtos;
 using JellyFederation.Shared.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -11,7 +12,7 @@ using Microsoft.EntityFrameworkCore;
 namespace JellyFederation.Server.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("[controller]")]
 public partial class ServersController : ControllerBase
 {
     private readonly IConfiguration _configuration;
@@ -63,7 +64,7 @@ public partial class ServersController : ControllerBase
     }
 
     [HttpGet]
-    [ServiceFilter(typeof(ApiKeyAuthFilter))]
+    [Authorize(AuthenticationSchemes = FederationAuthSchemes.ApiKeyOrSession)]
     public async Task<ActionResult<List<ServerInfoDto>>> List(
         [FromQuery] int page = PageRequest.DefaultPage,
         [FromQuery] int pageSize = PageRequest.DefaultPageSize,

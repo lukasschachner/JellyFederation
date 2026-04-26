@@ -1,11 +1,14 @@
 using System.Diagnostics;
 using System.Net;
+using System.Security.Claims;
 using JellyFederation.Data;
+using JellyFederation.Server.Auth;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Diagnostics;
 using JellyFederation.Shared.Models;
 using JellyFederation.Shared.SignalR;
 using JellyFederation.Shared.Telemetry;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 
@@ -17,6 +20,7 @@ namespace JellyFederation.Server.Hubs;
 ///     - Hole punch signaling (rendezvous before P2P transfer)
 ///     - File request notifications
 /// </summary>
+[Authorize(AuthenticationSchemes = FederationAuthSchemes.ApiKeyOrSession)]
 public partial class FederationHub : Hub
 {
     private const int MaxIceSignalPayloadChars = 128 * 1024;
@@ -25,7 +29,6 @@ public partial class FederationHub : Hub
     private readonly FederationDbContext _db;
     private readonly ILogger<FederationHub> _logger;
     private readonly FileRequestNotifier _notifier;
-    private readonly WebSessionService _sessions;
     private readonly ServerConnectionTracker _tracker;
 
     /// <summary>
@@ -37,89 +40,34 @@ public partial class FederationHub : Hub
     public FederationHub(FederationDbContext db,
         ServerConnectionTracker tracker,
         FileRequestNotifier notifier,
-        WebSessionService sessions,
         ILogger<FederationHub> logger)
     {
         _db = db;
         _tracker = tracker;
         _notifier = notifier;
-        _sessions = sessions;
         _logger = logger;
-    }
-
-    /// <summary>
-    ///     Resolves the server from the hub API key.
-    ///     Preferred transports pass the key via X-Api-Key or Authorization: Bearer.
-    ///     Browser SignalR clients may fall back to access_token because WebSocket APIs cannot set custom headers.
-    ///     The legacy apiKey query parameter is retained for backwards compatibility.
-    /// </summary>
-    private async Task<RegisteredServer?> AuthenticateAsync()
-    {
-        var http = Context.GetHttpContext();
-        var apiKey = ResolveApiKey(http);
-        RegisteredServer? server;
-        if (string.IsNullOrEmpty(apiKey))
-        {
-            if (http is null)
-            {
-                LogHubAuthenticationMissingApiKey(_logger, Context.ConnectionId);
-                return null;
-            }
-
-            server = await _sessions.AuthenticateCookieAsync(http.Request, asTracking: true).ConfigureAwait(false);
-            if (server is null)
-                LogHubAuthenticationMissingApiKey(_logger, Context.ConnectionId);
-            return server;
-        }
-
-        // AsTracking required — server.IsOnline/LastSeenAt are mutated in OnConnectedAsync.
-        server = await _db.Servers
-            .AsTracking()
-            .FirstOrDefaultAsync(s => s.ApiKey == apiKey).ConfigureAwait(false);
-        if (server is null)
-            LogHubAuthenticationFailed(_logger, Context.ConnectionId);
-        return server;
-    }
-
-    private static string? ResolveApiKey(HttpContext? http)
-    {
-        if (http is null)
-            return null;
-
-        if (http.Request.Headers.TryGetValue("X-Api-Key", out var apiKeyHeader))
-        {
-            var apiKey = apiKeyHeader.ToString();
-            if (!string.IsNullOrWhiteSpace(apiKey))
-                return apiKey;
-        }
-
-        if (http.Request.Headers.TryGetValue("Authorization", out var authorizationHeader))
-        {
-            var authorization = authorizationHeader.ToString();
-            const string bearerPrefix = "Bearer ";
-            if (authorization.StartsWith(bearerPrefix, StringComparison.OrdinalIgnoreCase))
-            {
-                var bearerToken = authorization[bearerPrefix.Length..].Trim();
-                if (!string.IsNullOrWhiteSpace(bearerToken))
-                    return bearerToken;
-            }
-        }
-
-        var accessToken = http.Request.Query["access_token"].ToString();
-        if (!string.IsNullOrWhiteSpace(accessToken))
-            return accessToken;
-
-        var legacyApiKey = http.Request.Query["apiKey"].ToString();
-        return string.IsNullOrWhiteSpace(legacyApiKey) ? null : legacyApiKey;
     }
 
     // Called by plugin on connect.
     public override async Task OnConnectedAsync()
     {
-        var server = await AuthenticateAsync().ConfigureAwait(false);
-        if (server is null)
+        var serverIdClaim = Context.User?.FindFirstValue(ClaimTypes.NameIdentifier)
+                            ?? Context.User?.FindFirstValue(FederationAuthSchemes.ServerIdClaimType);
+        if (!Guid.TryParse(serverIdClaim, out var authenticatedServerId))
         {
             LogHubConnectionAbortedUnauthenticated(_logger, Context.ConnectionId);
+            Context.Abort();
+            return;
+        }
+
+        // AsTracking required — server.IsOnline/LastSeenAt are mutated in OnConnectedAsync.
+        var server = await _db.Servers
+            .AsTracking()
+            .FirstOrDefaultAsync(s => s.Id == authenticatedServerId)
+            .ConfigureAwait(false);
+        if (server is null)
+        {
+            LogHubAuthenticationFailed(_logger, Context.ConnectionId);
             Context.Abort();
             return;
         }

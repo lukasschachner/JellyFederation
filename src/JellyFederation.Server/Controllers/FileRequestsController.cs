@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using JellyFederation.Data;
-using JellyFederation.Server.Filters;
+using JellyFederation.Server.Auth;
 using JellyFederation.Server.Hubs;
 using JellyFederation.Server.Pagination;
 using JellyFederation.Server.Services;
@@ -8,6 +8,7 @@ using JellyFederation.Shared.Dtos;
 using JellyFederation.Shared.Models;
 using JellyFederation.Shared.SignalR;
 using JellyFederation.Shared.Telemetry;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
@@ -15,8 +16,8 @@ using Microsoft.EntityFrameworkCore;
 namespace JellyFederation.Server.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
-[ServiceFilter(typeof(ApiKeyAuthFilter))]
+[Route("[controller]")]
+[Authorize(AuthenticationSchemes = FederationAuthSchemes.ApiKeyOrSession)]
 public partial class FileRequestsController : AuthenticatedController
 {
     private readonly FederationDbContext _db;

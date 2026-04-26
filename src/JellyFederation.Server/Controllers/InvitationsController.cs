@@ -1,15 +1,16 @@
-using JellyFederation.Server.Filters;
+using JellyFederation.Server.Auth;
 using JellyFederation.Server.Pagination;
 using JellyFederation.Server.Services;
 using JellyFederation.Shared.Dtos;
 using JellyFederation.Shared.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace JellyFederation.Server.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
-[ServiceFilter(typeof(ApiKeyAuthFilter))]
+[Route("[controller]")]
+[Authorize(AuthenticationSchemes = FederationAuthSchemes.ApiKeyOrSession)]
 public partial class InvitationsController : AuthenticatedController
 {
     private readonly InvitationService _invitations;

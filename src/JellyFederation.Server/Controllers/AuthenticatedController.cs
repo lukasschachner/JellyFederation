@@ -5,13 +5,15 @@ using Microsoft.AspNetCore.Mvc;
 namespace JellyFederation.Server.Controllers;
 
 /// <summary>
-///     Base controller for endpoints protected by ApiKeyAuthFilter.
+///     Base controller for endpoints protected by Federation auth.
 ///     Provides access to the authenticated server via CurrentServer.
 /// </summary>
 public abstract class AuthenticatedController : ControllerBase
 {
     protected RegisteredServer CurrentServer =>
-        (RegisteredServer)HttpContext.Items["Server"]!;
+        HttpContext.Items.TryGetValue("Server", out var value) && value is RegisteredServer server
+            ? server
+            : throw new InvalidOperationException("Authenticated server context is not available.");
 
     protected string CorrelationId
     {
