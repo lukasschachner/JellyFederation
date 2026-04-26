@@ -20,6 +20,7 @@
   ],
   "rangeStrategy": "bump",
   "rebaseWhen": "behind-base-branch",
+  "prCreation": "immediate",
   "prConcurrentLimit": 8,
   "prHourlyLimit": 2,
   "packageRules": [
