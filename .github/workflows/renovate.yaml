@@ -1,0 +1,48 @@
+name: "Renovate (Self-hosted CLI)"
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - "renovate.json"
+      - ".github/workflows/renovate.yaml"
+
+jobs:
+  renovate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      workflows: write
+    steps:
+      - name: Run Renovate CLI
+        env:
+          RENOVATE_TOKEN_INPUT: ${{ secrets.RENOVATE_TOKEN }}
+          GITHUB_TOKEN_INPUT: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_API_URL: ${{ github.api_url }}
+        run: |
+          set -euo pipefail
+
+          TOKEN="${RENOVATE_TOKEN_INPUT:-}"
+          if [ -z "$TOKEN" ]; then
+            TOKEN="$GITHUB_TOKEN_INPUT"
+          fi
+
+          if [ -z "$TOKEN" ]; then
+            echo "No token available. Set RENOVATE_TOKEN secret or allow GITHUB_TOKEN." >&2
+            exit 1
+          fi
+
+          docker run --rm \
+            -e RENOVATE_TOKEN="$TOKEN" \
+            -e RENOVATE_PLATFORM="github" \
+            -e RENOVATE_ENDPOINT="$GITHUB_API_URL" \
+            -e RENOVATE_REPOSITORIES="$GITHUB_REPOSITORY" \
+            -e RENOVATE_ONBOARDING="false" \
+            -e LOG_LEVEL="info" \
+            renovate/renovate:latest
