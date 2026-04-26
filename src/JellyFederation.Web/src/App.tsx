@@ -7,6 +7,7 @@ import { requestsLiveUpdatedAtQueryKey, requestsQueryKey, transferProgressQueryK
 import type { FileRequest, FileRequestStatus, TransferFailureCategory, TransferTransportMode } from './api/types'
 import type { FileRequestUpdate, TransferProgress } from './hooks/useSignalR'
 import { Layout } from './components/Layout'
+import { ToastProvider } from './components/Toast'
 import { Setup } from './pages/Setup'
 import { Dashboard } from './pages/Dashboard'
 import { Library } from './pages/Library'
@@ -102,7 +103,9 @@ function AppInner() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AppInner />
+      <ToastProvider>
+        <AppInner />
+      </ToastProvider>
     </QueryClientProvider>
   )
 }

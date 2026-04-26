@@ -1,12 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { libraryApi } from '../api/client'
+import { HardDrive } from 'lucide-react'
+import { getErrorDescription, libraryApi } from '../api/client'
 import type { MediaItem } from '../api/types'
+import { useToast } from '../hooks/useToast'
 import { Badge } from '../components/Badge'
 import { Card } from '../components/Card'
+import { EmptyState } from '../components/EmptyState'
 import { MediaListSkeleton } from '../components/MediaSkeletons'
 import { MediaSearchBox } from '../components/MediaSearchBox'
 import { MediaTypeIcon } from '../components/MediaTypeIcon'
 import { MediaTypeTabs } from '../components/MediaTypeTabs'
+import { PageHeader } from '../components/PageHeader'
 import { Paginator } from '../components/Paginator'
 import { formatBytes } from '../utils/formatBytes'
 import { useMediaFilter } from '../hooks/useMediaFilter'
@@ -15,12 +19,21 @@ const PAGE_SIZE = 100
 
 function RequestableToggle({ item }: { item: MediaItem }) {
   const queryClient = useQueryClient()
+  const toast = useToast()
   const mutation = useMutation({
     mutationFn: (value: boolean) => libraryApi.setRequestable(item.id, value),
-    onSuccess: () => {
+    onSuccess: (_data, value) => {
       queryClient.invalidateQueries({ queryKey: ['my-media'] })
       queryClient.invalidateQueries({ queryKey: ['my-media-counts'] })
+      toast.success(
+        value ? 'Now requestable' : 'Now private',
+        item.title,
+      )
     },
+    onError: (err) => toast.error(
+      `Couldn't update ${item.title}`,
+      getErrorDescription(err, 'Update failed'),
+    ),
   })
 
   return (
@@ -63,19 +76,13 @@ export function MyMedia() {
 
   return (
     <div className="max-w-6xl">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-semibold text-[var(--color-heading)]">My Media</h1>
-          <p className="text-sm text-[var(--color-text)] mt-1">
-            Manage which items federated peers can request
-          </p>
-        </div>
-        {counts && (
-          <span className="text-sm text-[var(--color-text)]">
-            {counts['All'] ?? 0} items total
-          </span>
-        )}
-      </div>
+      <PageHeader
+        eyebrow="Local library"
+        title="My Media"
+        description="Manage which items federated peers can discover and request. Private items remain visible only to you."
+        icon={<HardDrive size={18} />}
+        action={counts && <span className="rounded-full border border-[var(--color-border)] bg-white/5 px-3 py-1.5 text-sm text-[var(--color-text)]">{counts['All'] ?? 0} items total</span>}
+      />
 
       <MediaTypeTabs activeTab={activeTab} counts={counts} onTabChange={handleTab} />
 
@@ -95,12 +102,11 @@ export function MyMedia() {
       )}
 
       {!isLoading && !error && (counts?.['All'] ?? 0) === 0 && (
-        <Card className="text-center py-16">
-          <p className="text-[var(--color-heading)] font-medium">No items synced yet</p>
-          <p className="text-sm text-[var(--color-text)] mt-1">
-            Make sure the Jellyfin plugin is configured and running
-          </p>
-        </Card>
+        <EmptyState
+          icon={<HardDrive size={20} />}
+          title="No items synced yet"
+          description="Make sure the Jellyfin plugin is configured and running. Synced items will appear here."
+        />
       )}
 
       {!isLoading && items && items.length > 0 && (

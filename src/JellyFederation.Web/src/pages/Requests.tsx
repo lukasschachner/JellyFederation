@@ -1,11 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { AlertCircle, CheckCircle2, Clock, Download, Loader2, Radio, X } from 'lucide-react'
-import { fileRequestsApi } from '../api/client'
+import { fileRequestsApi, getErrorDescription } from '../api/client'
 import { requestsLiveUpdatedAtQueryKey, requestsQueryKey, transferProgressQueryKey } from '../api/queryKeys'
 import type { FileRequest, FileRequestStatus } from '../api/types'
-import { Badge } from '../components/Badge'
 import { Card } from '../components/Card'
+import { ConfirmDialog } from '../components/ConfirmDialog'
+import { EmptyState } from '../components/EmptyState'
+import { IconButton } from '../components/IconButton'
+import { PageHeader } from '../components/PageHeader'
+import { SectionHeader } from '../components/SectionHeader'
+import { StatusPill } from '../components/StatusPill'
+import { useToast } from '../hooks/useToast'
 import { useConfig } from '../hooks/useConfig'
 import { formatBytes } from '../utils/formatBytes'
 import { formatDateTime } from '../utils/formatDate'
@@ -20,15 +26,6 @@ const statusIcon: Record<FileRequestStatus, React.ReactNode> = {
   Cancelled: <X size={14} className="text-zinc-400" />,
 }
 
-const statusVariant: Record<FileRequestStatus, 'default' | 'success' | 'warning' | 'danger' | 'neutral'> = {
-  Pending: 'warning',
-  HolePunching: 'default',
-  Transferring: 'default',
-  Completed: 'success',
-  Failed: 'danger',
-  Cancelled: 'neutral',
-}
-
 const cancellableStatuses: FileRequestStatus[] = ['Pending', 'HolePunching', 'Transferring']
 
 function RequestRow({
@@ -41,7 +38,7 @@ function RequestRow({
   req: FileRequest
   myServerId: string
   progress: TransferProgress | null
-  onCancel: (id: string) => void
+  onCancel: (request: FileRequest) => void
   cancelling: boolean
 }) {
   const isIncoming = req.owningServerId.toLowerCase() === myServerId.toLowerCase()
@@ -53,71 +50,63 @@ function RequestRow({
     ? Math.min(100, Math.round((req.bytesTransferred / req.totalBytes) * 100))
     : null
   const canCancel = cancellableStatuses.includes(req.status)
+  const activeTransfer = req.status === 'Transferring' && pct !== null
 
   return (
-    <Card className="flex items-start gap-4">
-      <div className="w-9 h-9 rounded-lg bg-white/5 flex items-center justify-center shrink-0 mt-0.5">
-        {statusIcon[req.status]}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <p className="text-sm font-medium text-[var(--color-heading)] truncate">
-            {req.itemTitle ?? req.jellyfinItemId}
-          </p>
-          <Badge variant="neutral">{isIncoming ? 'Incoming' : 'Outgoing'}</Badge>
+    <Card className={`overflow-hidden ${req.status === 'Failed' ? 'border-red-900/40 bg-red-950/10' : req.status === 'Completed' ? 'border-emerald-900/30 bg-emerald-950/10' : canCancel ? 'border-[var(--color-accent)]/25 bg-[var(--color-accent-dim)]/20' : ''}`}>
+      <div className="flex items-start gap-4">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/5 mt-0.5">
+          {statusIcon[req.status]}
         </div>
-        <p className="text-xs text-[var(--color-text)] mt-0.5">
-          {isIncoming ? 'from' : 'to'}{' '}
-          <span className="text-[var(--color-heading)]">{peerName}</span>
-          {' · '}{formatDateTime(req.createdAt)}
-        </p>
-        <p className="text-xs text-[var(--color-text)] mt-1">
-          Mode: <span className="text-[var(--color-heading)]">{req.selectedTransportMode ?? 'n/a'}</span>
-          {req.failureCategory ? (
-            <>
-              {' · '}Failure Category:{' '}
-              <span className="text-[var(--color-heading)]">{req.failureCategory}</span>
-            </>
-          ) : null}
-        </p>
-        {req.status === 'Transferring' && pct !== null && (
-          <div className="mt-2">
-            <div className="flex justify-between text-xs text-[var(--color-text)] mb-1">
-              <span>{pct}%</span>
-              <span>{formatBytes(progress!.bytesReceived)} / {formatBytes(progress!.totalBytes)}</span>
-            </div>
-            <div className="h-1.5 rounded-full bg-white/10 overflow-hidden">
-              <div
-                className="h-full rounded-full bg-[var(--color-accent)] transition-all duration-500"
-                style={{ width: `${pct}%` }}
-              />
-            </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="truncate text-sm font-medium text-[var(--color-heading)]">{req.itemTitle ?? req.jellyfinItemId}</p>
+            <span className="rounded-full bg-white/5 px-2 py-0.5 text-xs font-medium text-[var(--color-text)]">{isIncoming ? 'Incoming' : 'Outgoing'}</span>
           </div>
-        )}
-        {req.status !== 'Transferring' && persistedPct !== null && req.totalBytes !== null && (
-          <p className="text-xs text-[var(--color-text)] mt-2">
-            Progress snapshot: {persistedPct}% ({formatBytes(req.bytesTransferred)} / {formatBytes(req.totalBytes)})
+          <p className="mt-0.5 text-xs text-[var(--color-text)]">
+            {isIncoming ? 'from' : 'to'} <span className="text-[var(--color-heading)]">{peerName}</span> · {formatDateTime(req.createdAt)}
           </p>
-        )}
-        {req.failureReason && (
-          <p className="text-xs text-red-400 mt-2 leading-relaxed">{req.failureReason}</p>
-        )}
+          <p className="mt-1 text-xs text-[var(--color-text)]">
+            Mode: <span className="text-[var(--color-heading)]">{req.selectedTransportMode ?? 'n/a'}</span>
+            {req.failureCategory ? <> · Failure Category: <span className="text-[var(--color-heading)]">{req.failureCategory}</span></> : null}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <StatusPill status={req.status} />
+          {canCancel && (
+            <IconButton
+              label={`Cancel request for ${req.itemTitle ?? req.jellyfinItemId}`}
+              icon={cancelling ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
+              variant="danger"
+              onClick={() => onCancel(req)}
+              disabled={cancelling}
+            />
+          )}
+        </div>
       </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <Badge variant={statusVariant[req.status]}>{req.status}</Badge>
-        {canCancel && (
-          <button
-            type="button"
-            onClick={() => onCancel(req.id)}
-            disabled={cancelling}
-            aria-label={`Cancel request for ${req.itemTitle ?? req.jellyfinItemId}`}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-400 hover:text-red-400 hover:bg-red-400/10 transition-colors disabled:opacity-40"
-            title="Cancel"
-          >
-            {cancelling ? <Loader2 size={13} className="animate-spin" /> : <X size={13} />}
-          </button>
-        )}
-      </div>
+
+      {activeTransfer && (
+        <div className="mt-4 rounded-xl border border-[var(--color-accent)]/20 bg-black/15 p-3">
+          <div className="mb-2 flex items-center justify-between text-xs">
+            <span className="font-medium text-[var(--color-heading)]">Transfer progress</span>
+            <span className="text-[var(--color-accent)]">{pct}%</span>
+          </div>
+          <div className="mb-2 h-2.5 overflow-hidden rounded-full bg-white/10">
+            <div className="h-full rounded-full bg-gradient-to-r from-[var(--color-accent)] to-emerald-400 transition-all duration-500" style={{ width: `${pct}%` }} />
+          </div>
+          <div className="flex justify-between text-xs text-[var(--color-text)]">
+            <span>{formatBytes(progress!.bytesReceived)} received</span>
+            <span>{formatBytes(progress!.totalBytes)} total</span>
+          </div>
+        </div>
+      )}
+
+      {!activeTransfer && persistedPct !== null && req.totalBytes !== null && (
+        <p className="mt-3 text-xs text-[var(--color-text)]">
+          Progress snapshot: {persistedPct}% ({formatBytes(req.bytesTransferred)} / {formatBytes(req.totalBytes)})
+        </p>
+      )}
+      {req.failureReason && <p className="mt-3 text-xs leading-relaxed text-red-400">{req.failureReason}</p>}
     </Card>
   )
 }
@@ -125,20 +114,17 @@ function RequestRow({
 export function Requests() {
   const cfg = useConfig()
   const qc = useQueryClient()
+  const toast = useToast()
   const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set())
+  const [requestToCancel, setRequestToCancel] = useState<FileRequest | null>(null)
 
-  const { data: requests, isLoading } = useQuery({
-    queryKey: requestsQueryKey,
-    queryFn: fileRequestsApi.list,
-  })
-
+  const { data: requests, isLoading } = useQuery({ queryKey: requestsQueryKey, queryFn: fileRequestsApi.list })
   const { data: progressMap = {} } = useQuery({
     queryKey: transferProgressQueryKey,
     queryFn: () => Promise.resolve({} as Record<string, TransferProgress>),
     initialData: {} as Record<string, TransferProgress>,
     staleTime: Infinity,
   })
-
   const { data: liveUpdatedAt = null } = useQuery({
     queryKey: requestsLiveUpdatedAtQueryKey,
     queryFn: () => Promise.resolve(null as number | null),
@@ -149,96 +135,61 @@ export function Requests() {
   const cancelMutation = useMutation({
     mutationFn: (id: string) => fileRequestsApi.cancel(id),
     onMutate: (id) => setCancellingIds(prev => new Set([...prev, id])),
+    onSuccess: (_data, id) => {
+      const title = requests?.find(r => r.id === id)?.itemTitle
+      setRequestToCancel(null)
+      toast.info('Request cancelled', title ?? undefined)
+    },
+    onError: (err) => toast.error('Could not cancel request', getErrorDescription(err, 'Failed to cancel request')),
     onSettled: (_, __, id) => {
       setCancellingIds(prev => { const s = new Set(prev); s.delete(id); return s })
       qc.invalidateQueries({ queryKey: requestsQueryKey })
     },
   })
 
-  const active = requests?.filter(r =>
-    r.status === 'Pending' || r.status === 'HolePunching' || r.status === 'Transferring'
-  ) ?? []
-  const done = requests?.filter(r =>
-    r.status === 'Completed' || r.status === 'Failed' || r.status === 'Cancelled'
-  ) ?? []
+  const active = requests?.filter(r => r.status === 'Pending' || r.status === 'HolePunching' || r.status === 'Transferring') ?? []
+  const done = requests?.filter(r => r.status === 'Completed' || r.status === 'Failed' || r.status === 'Cancelled') ?? []
 
   return (
     <div className="max-w-3xl">
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <h1 className="text-2xl font-semibold text-[var(--color-heading)]">Requests</h1>
-          <p className="text-sm text-[var(--color-text)] mt-1">File transfer queue and history</p>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-[var(--color-text)]">
-          <Download size={13} />
-          {liveUpdatedAt
-            ? <span className="text-[var(--color-accent)]">Live updates active</span>
-            : 'Waiting for updates…'}
-        </div>
-      </div>
+      <PageHeader
+        eyebrow="Transfers"
+        title="Requests"
+        description="File transfer queue and history for incoming and outgoing media requests."
+        icon={<Download size={18} />}
+        action={<div className="flex items-center gap-2 rounded-full border border-[var(--color-border)] bg-white/5 px-3 py-1.5 text-xs text-[var(--color-text)]"><Download size={13} />{liveUpdatedAt ? <span className="text-[var(--color-accent)]">Live updates active</span> : 'Waiting for updates…'}</div>}
+      />
 
-      {isLoading && (
-        <div className="flex items-center justify-center py-20 text-[var(--color-text)]">
-          <Loader2 size={20} className="animate-spin mr-2" />
-          Loading…
-        </div>
-      )}
-
-      {!isLoading && requests?.length === 0 && (
-        <Card className="text-center py-16">
-          <div className="w-12 h-12 rounded-xl bg-[var(--color-accent-dim)] flex items-center justify-center mx-auto mb-3">
-            <Download size={20} className="text-[var(--color-accent)]" />
-          </div>
-          <p className="text-[var(--color-heading)] font-medium">No file requests yet</p>
-          <p className="text-sm text-[var(--color-text)] mt-1">
-            Browse the library and click Request on a media item
-          </p>
-        </Card>
-      )}
+      {isLoading && <div className="flex items-center justify-center py-20 text-[var(--color-text)]"><Loader2 size={20} className="animate-spin mr-2" />Loading…</div>}
+      {!isLoading && requests?.length === 0 && <EmptyState icon={<Download size={20} />} title="No file requests yet" description="Browse the library and click Request on a media item. Active transfers and history will appear here." />}
 
       {active.length > 0 && (
         <section className="mb-8">
-          <h2 className="text-sm font-semibold text-[var(--color-heading)] mb-3 flex items-center gap-2">
-            <Radio size={14} className="text-[var(--color-accent)]" />
-            Active
-            <span className="ml-auto text-xs text-[var(--color-text)] font-normal">{active.length}</span>
-          </h2>
+          <SectionHeader title="Active" icon={<Radio size={14} />} count={active.length} />
           <div className="flex flex-col gap-2">
-            {active.map(r => (
-              <RequestRow
-                key={r.id}
-                req={r}
-                myServerId={cfg?.serverId ?? ''}
-                progress={progressMap[r.id] ?? null}
-                onCancel={(id) => cancelMutation.mutate(id)}
-                cancelling={cancellingIds.has(r.id)}
-              />
-            ))}
+            {active.map(r => <RequestRow key={r.id} req={r} myServerId={cfg?.serverId ?? ''} progress={progressMap[r.id] ?? null} onCancel={setRequestToCancel} cancelling={cancellingIds.has(r.id)} />)}
           </div>
         </section>
       )}
 
       {done.length > 0 && (
         <section>
-          <h2 className="text-sm font-semibold text-[var(--color-heading)] mb-3 flex items-center gap-2">
-            <CheckCircle2 size={14} />
-            History
-            <span className="ml-auto text-xs text-[var(--color-text)] font-normal">{done.length}</span>
-          </h2>
+          <SectionHeader title="History" icon={<CheckCircle2 size={14} />} count={done.length} />
           <div className="flex flex-col gap-2">
-            {done.map(r => (
-              <RequestRow
-                key={r.id}
-                req={r}
-                myServerId={cfg?.serverId ?? ''}
-                progress={null}
-                onCancel={() => {}}
-                cancelling={false}
-              />
-            ))}
+            {done.map(r => <RequestRow key={r.id} req={r} myServerId={cfg?.serverId ?? ''} progress={null} onCancel={() => {}} cancelling={false} />)}
           </div>
         </section>
       )}
+
+      <ConfirmDialog
+        open={requestToCancel !== null}
+        title="Cancel transfer request?"
+        description={requestToCancel ? <>This will cancel <span className="text-[var(--color-heading)]">{requestToCancel.itemTitle ?? requestToCancel.jellyfinItemId}</span>. You can request it again later.</> : ''}
+        confirmLabel="Cancel request"
+        variant="danger"
+        onConfirm={() => { if (requestToCancel) cancelMutation.mutate(requestToCancel.id) }}
+        onCancel={() => setRequestToCancel(null)}
+      />
     </div>
   )
 }

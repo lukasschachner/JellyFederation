@@ -3,14 +3,23 @@
 @theme {
   --color-bg: #0f1117;
   --color-surface: #1a1d27;
+  --color-surface-raised: #202431;
+  --color-surface-muted: rgba(255,255,255,.035);
   --color-border: #2a2d3a;
+  --color-border-strong: #3a3f52;
   --color-text: #9ca3af;
+  --color-text-muted: #7b8494;
+  --color-text-subtle: #596170;
   --color-heading: #f1f5f9;
   --color-accent: #818cf8;
   --color-accent-dim: rgba(129,140,248,.15);
   --color-success: #34d399;
+  --color-success-bg: rgba(52,211,153,.13);
   --color-warning: #fbbf24;
+  --color-warning-bg: rgba(251,191,36,.13);
   --color-danger: #f87171;
+  --color-danger-bg: rgba(248,113,113,.13);
+  --color-focus: rgba(129,140,248,.6);
 }
 
 body {
@@ -19,4 +28,56 @@ body {
   color: var(--color-text);
   font-family: system-ui, -apple-system, sans-serif;
   -webkit-font-smoothing: antialiased;
+}
+
+* {
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Toast animations */
+@keyframes jf-toast-in {
+  0%   { opacity: 0; transform: translateY(8px) scale(.98); }
+  100% { opacity: 1; transform: translateY(0)   scale(1); }
+}
+
+@keyframes jf-toast-bar {
+  0%   { width: 100%; }
+  100% { width: 0%; }
+}
+
+@keyframes jf-page-in {
+  0%   { opacity: 0; transform: translateY(4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.jf-toast-enter {
+  animation: jf-toast-in 180ms ease-out;
+}
+
+.jf-toast-bar {
+  animation-name: jf-toast-bar;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+/* Button click feedback ripple */
+@keyframes jf-press {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(.96); }
+  100% { transform: scale(1); }
+}
+
+.jf-press {
+  animation: jf-press 160ms ease-out;
 }
