@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using JellyFederation.Plugin.Configuration;
+using JellyFederation.Shared.Diagnostics;
 using JellyFederation.Shared.SignalR;
 using JellyFederation.Shared.Telemetry;
 using Microsoft.AspNetCore.SignalR.Client;
@@ -74,6 +75,10 @@ public partial class FederationSignalRService : IAsyncDisposable
 
         _connection.On<HolePunchRequest>("HolePunchRequest", async req =>
         {
+            using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+                req.FileRequestId,
+                transportMode: req.SelectedTransportMode.ToString()));
+
             LogHolePunchRequestReceived(_logger, req.FileRequestId);
             try
             {
@@ -87,6 +92,10 @@ public partial class FederationSignalRService : IAsyncDisposable
 
         _connection.On<FileRequestNotification>("FileRequestNotification", async notification =>
         {
+            using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+                notification.FileRequestId,
+                peerServerId: notification.RequestingServerId));
+
             LogIncomingFileRequest(_logger, notification.FileRequestId, notification.JellyfinItemId,
                 notification.RequestingServerId);
             try
@@ -101,6 +110,10 @@ public partial class FederationSignalRService : IAsyncDisposable
 
         _connection.On<FileRequestStatusUpdate>("FileRequestStatusUpdate", update =>
         {
+            using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+                update.FileRequestId,
+                transportMode: update.SelectedTransportMode?.ToString()));
+
             LogFileRequestStatus(
                 _logger,
                 update.FileRequestId,
@@ -113,6 +126,8 @@ public partial class FederationSignalRService : IAsyncDisposable
 
         _connection.On<CancelTransfer>("CancelTransfer", msg =>
         {
+            using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(msg.FileRequestId));
+
             LogCancellingTransfer(_logger, msg.FileRequestId);
             _holePunch.Cancel(msg.FileRequestId);
             _webRtc.Cancel(msg.FileRequestId);
@@ -120,6 +135,10 @@ public partial class FederationSignalRService : IAsyncDisposable
 
         _connection.On<IceNegotiateStart>("IceNegotiateStart", msg =>
         {
+            using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+                msg.FileRequestId,
+                role: msg.Role.ToString()));
+
             LogIceNegotiateStart(_logger, msg.FileRequestId, msg.Role.ToString());
             _ = Task.Run(async () =>
             {
@@ -150,18 +169,32 @@ public partial class FederationSignalRService : IAsyncDisposable
 
         _connection.On<IceSignal>("IceSignal", msg =>
         {
+            using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+                msg.FileRequestId,
+                signalType: msg.Type.ToString(),
+                transportMode: "WebRtc"));
+
             LogIceSignalReceived(_logger, msg.FileRequestId, msg.Type.ToString());
             _webRtc.HandleIceSignal(msg);
         });
 
         _connection.On<RelayChunk>("RelayReceiveChunk", msg =>
         {
+            using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+                msg.FileRequestId,
+                transportMode: "Relay"));
+
             LogRelayChunkReceived(_logger, msg.FileRequestId, msg.ChunkIndex, msg.IsEof);
             _webRtc.EnqueueRelayChunk(msg);
         });
 
         _connection.On<RelayTransferStart>("RelayTransferStart", msg =>
         {
+            using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+                msg.FileRequestId,
+                role: msg.Role.ToString(),
+                transportMode: "Relay"));
+
             LogRelayTransferStartReceived(_logger, msg.FileRequestId);
             _ = Task.Run(async () =>
             {

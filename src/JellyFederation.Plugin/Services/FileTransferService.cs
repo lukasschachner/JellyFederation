@@ -13,6 +13,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using JellyFederation.Plugin.Configuration;
+using JellyFederation.Shared.Diagnostics;
 using JellyFederation.Shared.Models;
 using JellyFederation.Shared.SignalR;
 using JellyFederation.Shared.Telemetry;
@@ -129,6 +130,10 @@ public partial class FileTransferService
     {
         var startedAt = Stopwatch.StartNew();
         var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            fileRequestId,
+            correlationId,
+            transportMode: selectedMode.ToString()));
         using var activity = FederationTelemetry.PluginActivitySource.StartActivity(
             FederationTelemetry.SpanFederationOperation,
             ActivityKind.Producer);
@@ -261,6 +266,10 @@ public partial class FileTransferService
     {
         var startedAt = Stopwatch.StartNew();
         var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            fileRequestId,
+            correlationId,
+            transportMode: selectedMode.ToString()));
         using var activity = FederationTelemetry.PluginActivitySource.StartActivity(
             FederationTelemetry.SpanFederationOperation,
             ActivityKind.Consumer);
@@ -875,6 +884,10 @@ public partial class FileTransferService
         CancellationToken ct)
     {
         var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            fileRequestId,
+            correlationId,
+            transportMode: TransferTransportMode.WebRtc.ToString()));
         var fileResolution = ResolveSourceFile(jellyfinItemId, correlationId);
         if (fileResolution.IsFailure)
         {
@@ -935,6 +948,10 @@ public partial class FileTransferService
         CancellationToken ct)
     {
         var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            fileRequestId,
+            correlationId,
+            transportMode: TransferTransportMode.WebRtc.ToString()));
 
         if (string.IsNullOrEmpty(config.DownloadDirectory))
         {
@@ -1079,6 +1096,10 @@ public partial class FileTransferService
         CancellationToken ct)
     {
         var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            fileRequestId,
+            correlationId,
+            transportMode: TransferTransportMode.Relay.ToString()));
         var fileResolution = ResolveSourceFile(jellyfinItemId, correlationId);
         if (fileResolution.IsFailure)
         {
@@ -1138,6 +1159,10 @@ public partial class FileTransferService
         CancellationToken ct)
     {
         var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            fileRequestId,
+            correlationId,
+            transportMode: TransferTransportMode.Relay.ToString()));
 
         if (string.IsNullOrEmpty(config.DownloadDirectory))
         {
@@ -1262,6 +1287,10 @@ public partial class FileTransferService
     /// </returns>
     public PipeReader ReceiveStreamingAsync(Guid fileRequestId, RTCDataChannel dc, CancellationToken ct)
     {
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            fileRequestId,
+            transportMode: TransferTransportMode.WebRtc.ToString()));
+
         var pipe = new Pipe();
         var frames = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(DataChannelReceiveQueueCapacity)
         {
@@ -1317,6 +1346,10 @@ public partial class FileTransferService
     /// </summary>
     public void EnqueueRelayChunk(RelayChunk chunk)
     {
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            chunk.FileRequestId,
+            transportMode: TransferTransportMode.Relay.ToString()));
+
         if (_relayQueues.TryGetValue(chunk.FileRequestId, out var queue))
         {
             queue.Writer.WriteAsync(chunk).AsTask().GetAwaiter().GetResult();

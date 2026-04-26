@@ -76,4 +76,42 @@ public partial class WebRtcTransportService
 
     [LoggerMessage(20, LogLevel.Warning, "Failed to report WebRTC transfer start for request {FileRequestId}")]
     private static partial void LogReportWebRtcStartedFailed(ILogger logger, Exception ex, Guid fileRequestId);
+
+    [LoggerMessage(21, LogLevel.Information,
+        "WebRTC ICE server configuration for request {FileRequestId}: stun={StunServer}, turnConfigured={TurnConfigured}")]
+    private static partial void LogIceServersConfigured(ILogger logger, Guid fileRequestId, string stunServer,
+        bool turnConfigured);
+
+    [LoggerMessage(22, LogLevel.Debug,
+        "ICE signal handled for request {FileRequestId}: type={Type}, payloadChars={PayloadChars}")]
+    private static partial void LogIceSignalHandled(ILogger logger, Guid fileRequestId, string type, int payloadChars);
+
+    [LoggerMessage(23, LogLevel.Debug,
+        "Queued ICE signal for request {FileRequestId} because session is not yet available")]
+    private static partial void LogIceSignalQueued(ILogger logger, Guid fileRequestId);
+
+    [LoggerMessage(24, LogLevel.Debug,
+        "Received candidate signal for request {FileRequestId}; remoteDescriptionApplied={RemoteDescriptionApplied}")]
+    private static partial void LogCandidateSignalReceived(ILogger logger, Guid fileRequestId,
+        bool remoteDescriptionApplied);
+
+    [LoggerMessage(25, LogLevel.Debug,
+        "Queued remote candidate for request {FileRequestId} until remote description is applied")]
+    private static partial void LogCandidateQueuedUntilRemoteDescription(ILogger logger, Guid fileRequestId);
+
+    [LoggerMessage(26, LogLevel.Debug,
+        "Applied remote ICE candidate immediately for request {FileRequestId}")]
+    private static partial void LogCandidateAppliedImmediately(ILogger logger, Guid fileRequestId);
+
+    [LoggerMessage(27, LogLevel.Debug,
+        "Flushed {CandidateCount} queued ICE candidates for request {FileRequestId}")]
+    private static partial void LogPendingCandidatesFlushed(ILogger logger, Guid fileRequestId, int candidateCount);
+
+    [LoggerMessage(28, LogLevel.Debug,
+        "Drained {SignalCount} pending ICE signals for request {FileRequestId}")]
+    private static partial void LogPendingSignalsDrained(ILogger logger, Guid fileRequestId, int signalCount);
+
+    [LoggerMessage(29, LogLevel.Warning,
+        "Received malformed ICE candidate payload for request {FileRequestId}; candidate was ignored")]
+    private static partial void LogMalformedCandidatePayload(ILogger logger, Guid fileRequestId);
 }

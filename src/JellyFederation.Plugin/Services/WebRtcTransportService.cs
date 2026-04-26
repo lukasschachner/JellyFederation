@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text.Json;
 using JellyFederation.Plugin.Configuration;
+using JellyFederation.Shared.Diagnostics;
 using JellyFederation.Shared.Models;
 using JellyFederation.Shared.SignalR;
 using JellyFederation.Shared.Telemetry;
@@ -51,11 +52,18 @@ public partial class WebRtcTransportService
         HubConnection connection,
         PluginConfiguration config)
     {
+        var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            fileRequestId,
+            correlationId,
+            role: IceRole.Offerer.ToString(),
+            transportMode: TransferTransportMode.WebRtc.ToString()));
+
         LogBeginAsOfferer(_logger, fileRequestId);
         using var activity = FederationTelemetry.PluginActivitySource.StartActivity(
             "ice.negotiate.offerer", ActivityKind.Client);
 
-        var pc = CreatePeerConnection(config);
+        var pc = CreatePeerConnection(config, fileRequestId);
         var cts = new CancellationTokenSource();
         var session = new IceNegotiationSession(fileRequestId, pc, IceRole.Offerer, cts);
         _sessions[fileRequestId] = session;
@@ -127,11 +135,18 @@ public partial class WebRtcTransportService
         HubConnection connection,
         PluginConfiguration config)
     {
+        var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            fileRequestId,
+            correlationId,
+            role: IceRole.Answerer.ToString(),
+            transportMode: TransferTransportMode.WebRtc.ToString()));
+
         LogBeginAsAnswerer(_logger, fileRequestId);
         using var activity = FederationTelemetry.PluginActivitySource.StartActivity(
             "ice.negotiate.answerer", ActivityKind.Client);
 
-        var pc = CreatePeerConnection(config);
+        var pc = CreatePeerConnection(config, fileRequestId);
         var cts = new CancellationTokenSource();
         var offerTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
         var session = new IceNegotiationSession(fileRequestId, pc, IceRole.Answerer, cts)
@@ -238,11 +253,19 @@ public partial class WebRtcTransportService
     /// </summary>
     public void HandleIceSignal(IceSignal signal)
     {
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            signal.FileRequestId,
+            signalType: signal.Type.ToString(),
+            transportMode: TransferTransportMode.WebRtc.ToString()));
+
+        LogIceSignalHandled(_logger, signal.FileRequestId, signal.Type.ToString(), signal.Payload.Length);
+
         if (!_sessions.TryGetValue(signal.FileRequestId, out var session))
         {
             var pending = _pendingSignals.GetOrAdd(signal.FileRequestId, _ => new ConcurrentQueue<IceSignal>());
             pending.Enqueue(signal);
             LogIceSignalNoSession(_logger, signal.FileRequestId, signal.Type.ToString());
+            LogIceSignalQueued(_logger, signal.FileRequestId);
             return;
         }
 
@@ -268,20 +291,31 @@ public partial class WebRtcTransportService
             case IceSignalType.Candidate:
                 try
                 {
-                    var init = JsonSerializer.Deserialize<IceCandidateInit>(signal.Payload);
-                    if (init is not null)
-                    {
-                        var candidate = new RTCIceCandidateInit
-                        {
-                            candidate = init.Candidate,
-                            sdpMid = init.SdpMid,
-                            sdpMLineIndex = (ushort)(init.SdpMLineIndex ?? 0)
-                        };
+                    LogCandidateSignalReceived(_logger, signal.FileRequestId, session.RemoteDescriptionApplied);
 
-                        if (session.RemoteDescriptionApplied)
-                            AddRemoteCandidate(session, candidate);
-                        else
-                            session.PendingCandidates.Enqueue(candidate);
+                    var init = JsonSerializer.Deserialize<IceCandidateInit>(signal.Payload);
+                    if (init is null || string.IsNullOrWhiteSpace(init.Candidate))
+                    {
+                        LogMalformedCandidatePayload(_logger, signal.FileRequestId);
+                        break;
+                    }
+
+                    var candidate = new RTCIceCandidateInit
+                    {
+                        candidate = init.Candidate,
+                        sdpMid = init.SdpMid,
+                        sdpMLineIndex = (ushort)(init.SdpMLineIndex ?? 0)
+                    };
+
+                    if (session.RemoteDescriptionApplied)
+                    {
+                        AddRemoteCandidate(session, candidate);
+                        LogCandidateAppliedImmediately(_logger, signal.FileRequestId);
+                    }
+                    else
+                    {
+                        session.PendingCandidates.Enqueue(candidate);
+                        LogCandidateQueuedUntilRemoteDescription(_logger, signal.FileRequestId);
                     }
                 }
                 catch (Exception ex)
@@ -309,8 +343,15 @@ public partial class WebRtcTransportService
     public async Task<string?> StartStreamingTransferAsync(
         Guid fileRequestId, HubConnection connection, CancellationToken ct = default)
     {
+        var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            fileRequestId,
+            correlationId,
+            role: IceRole.Answerer.ToString(),
+            transportMode: TransferTransportMode.WebRtc.ToString()));
+
         var config = _configProvider.GetConfiguration();
-        var pc = CreatePeerConnection(config);
+        var pc = CreatePeerConnection(config, fileRequestId);
         var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
         var offerTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -418,6 +459,11 @@ public partial class WebRtcTransportService
     /// </summary>
     public async Task StartRelayReceiveModeAsync(RelayTransferStart message, HubConnection connection)
     {
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            message.FileRequestId,
+            role: message.Role.ToString(),
+            transportMode: TransferTransportMode.Relay.ToString()));
+
         var config = _configProvider.GetConfiguration();
         await TriggerRelayReceiveAsync(message.FileRequestId, connection, config, CancellationToken.None)
             .ConfigureAwait(false);
@@ -425,6 +471,10 @@ public partial class WebRtcTransportService
 
     private async Task ReportWebRtcTransferStartedAsync(Guid fileRequestId, HubConnection connection, CancellationToken ct)
     {
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            fileRequestId,
+            transportMode: TransferTransportMode.WebRtc.ToString()));
+
         try
         {
             await connection.SendAsync("ReportHolePunchResult", new HolePunchResult(fileRequestId, true, null), ct)
@@ -436,7 +486,7 @@ public partial class WebRtcTransportService
         }
     }
 
-    private RTCPeerConnection CreatePeerConnection(PluginConfiguration config)
+    private RTCPeerConnection CreatePeerConnection(PluginConfiguration config, Guid fileRequestId)
     {
         var stunServer = string.IsNullOrWhiteSpace(config.StunServer)
             ? "stun.l.google.com:19302"
@@ -462,6 +512,8 @@ public partial class WebRtcTransportService
             iceServers = iceServers
         };
 
+        LogIceServersConfigured(_logger, fileRequestId, stunServer, !string.IsNullOrWhiteSpace(config.TurnServer));
+
         var pc = new RTCPeerConnection(configuration);
         return pc;
     }
@@ -469,6 +521,11 @@ public partial class WebRtcTransportService
     private async Task ForwardCandidateAsync(
         HubConnection connection, Guid fileRequestId, string candidateJson, CancellationToken ct)
     {
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            fileRequestId,
+            transportMode: TransferTransportMode.WebRtc.ToString(),
+            signalType: IceSignalType.Candidate.ToString()));
+
         try
         {
             await connection.SendAsync("ForwardIceSignal",
@@ -486,6 +543,10 @@ public partial class WebRtcTransportService
         Guid fileRequestId, string jellyfinItemId, HubConnection connection,
         PluginConfiguration config, CancellationToken ct)
     {
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            fileRequestId,
+            transportMode: TransferTransportMode.Relay.ToString()));
+
         if (!_sessions.TryGetValue(fileRequestId, out var session) || session.State == IceSessionState.Relay)
             return;
 
@@ -523,6 +584,10 @@ public partial class WebRtcTransportService
     private async Task TriggerRelayReceiveAsync(
         Guid fileRequestId, HubConnection connection, PluginConfiguration config, CancellationToken ct)
     {
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            fileRequestId,
+            transportMode: TransferTransportMode.Relay.ToString()));
+
         if (!_sessions.TryGetValue(fileRequestId, out var session) || session.State == IceSessionState.Relay)
             return;
 
@@ -540,6 +605,8 @@ public partial class WebRtcTransportService
 
     private void CleanupSession(Guid fileRequestId)
     {
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(fileRequestId));
+
         _pendingSignals.TryRemove(fileRequestId, out _);
         _streamUrls.TryRemove(fileRequestId, out _);
 
@@ -573,14 +640,26 @@ public partial class WebRtcTransportService
         if (!_pendingSignals.TryRemove(fileRequestId, out var pending))
             return;
 
+        var drainedCount = 0;
         while (pending.TryDequeue(out var signal))
+        {
+            drainedCount++;
             HandleIceSignal(signal);
+        }
+
+        LogPendingSignalsDrained(_logger, fileRequestId, drainedCount);
     }
 
     private void FlushPendingCandidates(IceNegotiationSession session)
     {
+        var flushedCount = 0;
         while (session.PendingCandidates.TryDequeue(out var candidate))
+        {
+            flushedCount++;
             AddRemoteCandidate(session, candidate);
+        }
+
+        LogPendingCandidatesFlushed(_logger, session.FileRequestId, flushedCount);
     }
 
     private void AddRemoteCandidate(IceNegotiationSession session, RTCIceCandidateInit candidate)

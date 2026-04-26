@@ -177,4 +177,20 @@ public partial class FederationHub
         string workflow,
         string connectionId,
         Guid requestId);
+
+    [LoggerMessage(39, LogLevel.Warning,
+        "ForwardIceSignal payload too large for request {RequestId}: payloadChars={PayloadChars}, maxChars={MaxChars} — dropping")]
+    private static partial void LogForwardIceSignalPayloadTooLarge(
+        ILogger logger,
+        Guid requestId,
+        int payloadChars,
+        int maxChars);
+
+    [LoggerMessage(40, LogLevel.Warning,
+        "RelaySendChunk payload too large for request {RequestId}: bytes={ChunkBytes}, maxBytes={MaxBytes} — dropping")]
+    private static partial void LogRelayChunkPayloadTooLarge(
+        ILogger logger,
+        Guid requestId,
+        int chunkBytes,
+        int maxBytes);
 }

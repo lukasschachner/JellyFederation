@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using JellyFederation.Data;
 using JellyFederation.Server.Services;
+using JellyFederation.Shared.Diagnostics;
 using JellyFederation.Shared.Models;
 using JellyFederation.Shared.SignalR;
 using JellyFederation.Shared.Telemetry;
@@ -212,6 +213,10 @@ public partial class FederationHub : Hub
     {
         var startedAt = Stopwatch.StartNew();
         var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            message.FileRequestId,
+            correlationId,
+            transportMode: message.SupportsIce ? TransferTransportMode.WebRtc.ToString() : TransferTransportMode.ArqUdp.ToString()));
         using var activity = FederationTelemetry.ServerActivitySource.StartActivity(
             FederationTelemetry.SpanSignalRWorkflow,
             ActivityKind.Server);
@@ -312,6 +317,9 @@ public partial class FederationHub : Hub
     {
         var startedAt = Stopwatch.StartNew();
         var correlationId = FederationTelemetry.CreateCorrelationId();
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            result.FileRequestId,
+            correlationId));
         using var activity = FederationTelemetry.ServerActivitySource.StartActivity(
             FederationTelemetry.SpanSignalRWorkflow,
             ActivityKind.Server);
@@ -402,6 +410,8 @@ public partial class FederationHub : Hub
 
     private async Task DispatchHolePunch(FileRequest request, HolePunchCandidate[] candidates)
     {
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(request.Id));
+
         // candidates is guaranteed to have exactly 2 distinct-server entries at dispatch time.
         var sender   = candidates[0].ServerId == request.OwningServerId      ? candidates[0] : candidates[1];
         var receiver = candidates[0].ServerId == request.RequestingServerId  ? candidates[0] : candidates[1];
@@ -488,8 +498,17 @@ public partial class FederationHub : Hub
     /// </summary>
     public async Task ForwardIceSignal(IceSignal signal)
     {
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            signal.FileRequestId,
+            signalType: signal.Type.ToString(),
+            transportMode: TransferTransportMode.WebRtc.ToString()));
+
         if (signal.Payload.Length > MaxIceSignalPayloadChars)
+        {
+            LogForwardIceSignalPayloadTooLarge(_logger, signal.FileRequestId, signal.Payload.Length,
+                MaxIceSignalPayloadChars);
             return;
+        }
 
         var senderId = _tracker.GetServerId(Context.ConnectionId);
         if (senderId is null)
@@ -537,8 +556,15 @@ public partial class FederationHub : Hub
     /// </summary>
     public async Task RelaySendChunk(RelayChunk chunk)
     {
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            chunk.FileRequestId,
+            transportMode: TransferTransportMode.Relay.ToString()));
+
         if (chunk.Data.Length > MaxRelayChunkBytes)
+        {
+            LogRelayChunkPayloadTooLarge(_logger, chunk.FileRequestId, chunk.Data.Length, MaxRelayChunkBytes);
             return;
+        }
 
         var senderId = _tracker.GetServerId(Context.ConnectionId);
         if (senderId is null)
@@ -581,6 +607,11 @@ public partial class FederationHub : Hub
     /// </summary>
     public async Task ForwardRelayTransferStart(RelayTransferStart message)
     {
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(
+            message.FileRequestId,
+            role: message.Role.ToString(),
+            transportMode: TransferTransportMode.Relay.ToString()));
+
         var senderId = _tracker.GetServerId(Context.ConnectionId);
         if (senderId is null)
         {
@@ -644,6 +675,8 @@ public partial class FederationHub : Hub
     /// </summary>
     public async Task ReportTransferProgress(TransferProgress progress)
     {
+        using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(progress.FileRequestId));
+
         var senderId = _tracker.GetServerId(Context.ConnectionId);
         if (senderId is null)
         {
