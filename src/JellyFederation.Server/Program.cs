@@ -14,24 +14,15 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
-using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Serilog;
+using Serilog.Sinks.OpenTelemetry;
 
 var builder = WebApplication.CreateBuilder(args);
 
 const int SignalRMaximumReceiveMessageSize = 128 * 1024;
-
-builder.Logging.Configure(options =>
-{
-    options.ActivityTrackingOptions =
-        ActivityTrackingOptions.TraceId |
-        ActivityTrackingOptions.SpanId |
-        ActivityTrackingOptions.ParentId |
-        ActivityTrackingOptions.Tags |
-        ActivityTrackingOptions.Baggage;
-});
 
 var telemetrySection = builder.Configuration.GetSection("Telemetry");
 var telemetryServiceName = telemetrySection.GetValue<string>("ServiceName") ?? "jellyfederation-server";
@@ -43,19 +34,32 @@ var enableLogs = telemetrySection.GetValue<bool?>("EnableLogs") ?? true;
 var releaseVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "dev";
 FederationTelemetry.CurrentReleaseVersion = releaseVersion;
 
-builder.Logging.AddOpenTelemetry(logging =>
+builder.Host.UseSerilog((context, services, loggerConfiguration) =>
 {
-    if (!enableLogs)
-        return;
+    loggerConfiguration
+        .ReadFrom.Configuration(context.Configuration)
+        .ReadFrom.Services(services)
+        .Enrich.FromLogContext()
+        .Enrich.WithProperty("component", "server")
+        .Enrich.WithProperty("release", releaseVersion)
+        .WriteTo.Console();
 
-    logging.IncludeFormattedMessage = true;
-    logging.IncludeScopes = true;
-    logging.ParseStateValues = true;
-    logging.SetResourceBuilder(ResourceBuilder.CreateDefault()
-        .AddService(telemetryServiceName, serviceVersion: releaseVersion));
-
-    if (Uri.TryCreate(telemetryOtlpEndpoint, UriKind.Absolute, out var endpoint))
-        logging.AddOtlpExporter(options => options.Endpoint = endpoint);
+    if (enableLogs && Uri.TryCreate(telemetryOtlpEndpoint, UriKind.Absolute, out var endpoint))
+        loggerConfiguration.WriteTo.OpenTelemetry(options =>
+        {
+            options.Endpoint = endpoint.ToString();
+            options.Protocol = Serilog.Sinks.OpenTelemetry.OtlpProtocol.Grpc;
+            options.ResourceAttributes = new Dictionary<string, object>
+            {
+                ["service.name"] = telemetryServiceName,
+                ["service.version"] = releaseVersion
+            };
+            options.IncludedData =
+                IncludedData.MessageTemplateTextAttribute |
+                IncludedData.TraceIdField |
+                IncludedData.SpanIdField |
+                IncludedData.SpecRequiredResourceAttributes;
+        });
 });
 
 var maxRequestBodySizeMb = builder.Configuration.GetValue<long?>("ServerLimits:MaxRequestBodySizeMb") ?? 10;
