@@ -4,7 +4,6 @@
     "config:recommended",
     "docker:pinDigests",
     ":semanticCommits",
-    ":dependencyDashboard",
     ":maintainLockFilesWeekly"
   ],
   "timezone": "Europe/Berlin",
