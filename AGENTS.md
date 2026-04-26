@@ -29,8 +29,10 @@ tests/JellyFederation.Server.Tests/
 ## Commands
 
 ```bash
-dotnet build JellyFederation.slnx
-dotnet test JellyFederation.slnx
+dotnet build --solution JellyFederation.slnx
+dotnet test --solution JellyFederation.slnx
+./dev.sh build all
+./dev.sh test all
 ./dev.sh stack-up
 ./dev.sh stack-status
 ```
@@ -65,6 +67,79 @@ Quality gates (use when applicable)
 
 Specialist agents
 - dotnet-concurrency-specialist, dotnet-performance-analyst, dotnet-benchmark-designer, akka-net-specialist, docfx-specialist
+
+## Release hygiene (plugin deploys)
+
+For any plugin change that is intended for deployment (local or remote), do **all** of the following:
+
+1. Bump plugin version in `src/JellyFederation.Plugin/JellyFederation.Plugin.csproj`:
+   - `<Version>`
+   - `<AssemblyVersion>`
+   - `<FileVersion>`
+2. Commit the version bump as a dedicated release/chore commit.
+3. Create an annotated git tag for that version (for example `v1.3.1` or `v1.3.1.0`).
+4. Deploy after tagging (`./dev.sh deploy` for local, `./dev.sh deploy-test ...` for remote).
+
+Do not ship deploy-intended plugin changes without a version bump + tag.
+
+## dev.sh: Build/Test usage (Microsoft Testing Platform aware)
+
+`dev.sh` now includes explicit build/test entrypoints. Prefer these for local developer workflows and agent automation.
+
+### Build commands
+
+```bash
+./dev.sh build                    # same as: ./dev.sh build all
+./dev.sh build all               # dotnet build --solution JellyFederation.slnx
+./dev.sh build server            # build server project only
+./dev.sh build plugin            # build plugin project only
+./dev.sh build web               # frontend build + copy dist to server wwwroot
+
+# pass through additional dotnet build args
+./dev.sh build all -c Release
+./dev.sh build server -v minimal
+```
+
+### Test commands
+
+```bash
+./dev.sh test                    # same as: ./dev.sh test all
+./dev.sh test all               # dotnet test --solution JellyFederation.slnx
+./dev.sh test server            # server tests only
+./dev.sh test plugin            # plugin tests only
+```
+
+### Important: Microsoft Testing Platform (MTP) CLI differences
+
+This repository uses **Microsoft Testing Platform** (`xunit.v3.mtp-v2`).
+
+1. Use `dotnet test --solution <slnx>` or `dotnet test --project <csproj>`.
+   - Positional forms like `dotnet test JellyFederation.slnx` are not valid in this setup.
+2. VSTest-era assumptions do not always apply; some runner arguments differ.
+3. Keep two argument lanes in mind:
+   - **dotnet test args** (before `--`), e.g. `--filter`, `--list-tests`, `-c Release`
+   - **MTP runner args** (after `--`), e.g. `-- --max-parallel-test-modules 1`
+
+### Test filtering differences (MTP vs VSTest)
+
+`--filter` / `FullyQualifiedName~...` is a VSTest pattern and **does not work** here.
+Use MTP/xUnit v3 filter options instead:
+
+- `--filter-class "*SignalRWorkflowTests"`
+- `--filter-method "*SignalRWorkflowTests*BothPeersConnectSuccessfully"`
+- `--filter-trait "Category=Integration"`
+- `--filter-query "/**/*/*/*[name~SignalRWorkflowTests]"` (xUnit query language)
+
+Examples:
+
+```bash
+./dev.sh test server --list-tests
+./dev.sh test server --filter-class "*SignalRWorkflowTests"
+./dev.sh test server --filter-query "/**/*/*/*[name~SignalRWorkflowTests]"
+./dev.sh test server -- --max-parallel-test-modules 1
+```
+
+When in doubt, prefer `./dev.sh test <target> ...` so command shape stays consistent.
 
 ## EF Core Migrations
 
