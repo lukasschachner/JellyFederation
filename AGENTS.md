@@ -76,9 +76,11 @@ For any plugin change that is intended for deployment (local or remote), do **al
    - `<Version>`
    - `<AssemblyVersion>`
    - `<FileVersion>`
-2. Commit the version bump as a dedicated release/chore commit.
-3. Create an annotated git tag for that version (for example `v1.3.1` or `v1.3.1.0`).
-4. Deploy after tagging (`./dev.sh deploy` for local, `./dev.sh deploy-test ...` for remote).
+2. Bump `build.yaml` `version` to the same value.
+   - `dev.sh` reads `PLUGIN_VERSION` from `build.yaml`; mismatches will deploy into the wrong plugin directory.
+3. Commit the version bump as a dedicated release/chore commit.
+4. Create an annotated git tag for that version (for example `v1.3.1` or `v1.3.1.0`).
+5. Deploy after tagging (`./dev.sh deploy` for local, `./dev.sh deploy-test ...` for remote).
 
 Do not ship deploy-intended plugin changes without a version bump + tag.
 

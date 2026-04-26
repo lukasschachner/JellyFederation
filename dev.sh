@@ -413,6 +413,64 @@ cmd_deploy() {
     deploy_local_from_tmp
 }
 
+cmd_build() {
+    local target="${1:-all}"
+    shift || true
+
+    heading "Building ($target)"
+
+    case "$target" in
+        all|solution)
+            dotnet build --solution "$REPO_DIR/JellyFederation.slnx" "$@"
+            ;;
+        server)
+            dotnet build "$REPO_DIR/src/JellyFederation.Server/JellyFederation.Server.csproj" "$@"
+            ;;
+        plugin)
+            dotnet build "$REPO_DIR/src/JellyFederation.Plugin/JellyFederation.Plugin.csproj" "$@"
+            ;;
+        web)
+            build_frontend
+            ;;
+        *)
+            err "Unknown build target: $target. Use all|solution|server|plugin|web"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_test() {
+    local target="${1:-all}"
+    shift || true
+
+    for arg in "$@"; do
+        if [[ "$arg" == "--filter" || "$arg" == --filter=* ]]; then
+            err "'--filter' is a VSTest argument and not supported by Microsoft Testing Platform in this repo."
+            err "Use one of: --filter-query, --filter-class, --filter-method, --filter-trait"
+            err "Example: $0 test server --filter-query "/**/*/*/*[name~SignalRWorkflowTests]""
+            exit 2
+        fi
+    done
+
+    heading "Testing ($target)"
+
+    case "$target" in
+        all|solution)
+            dotnet test --solution "$REPO_DIR/JellyFederation.slnx" "$@"
+            ;;
+        server)
+            dotnet test --project "$REPO_DIR/tests/JellyFederation.Server.Tests/JellyFederation.Server.Tests.csproj" "$@"
+            ;;
+        plugin)
+            dotnet test --project "$REPO_DIR/tests/JellyFederation.Plugin.Tests/JellyFederation.Plugin.Tests.csproj" "$@"
+            ;;
+        *)
+            err "Unknown test target: $target. Use all|solution|server|plugin"
+            exit 1
+            ;;
+    esac
+}
+
 cmd_logs() {
     local target="${1:-jellyfin}"
     case "$target" in
@@ -745,6 +803,16 @@ usage() {
     echo "  restart             Restart Jellyfin container"
     echo "  server              Start federation server only"
     echo "  deploy              Rebuild plugin and redeploy to running Jellyfin"
+    echo "  build [target] [dotnet args...]"
+    echo "                      Build target: all|solution|server|plugin|web (default: all)"
+    echo "  test [target] [dotnet test args...]"
+    echo "                      Run tests with Microsoft Testing Platform"
+    echo "                      Target: all|solution|server|plugin (default: all)"
+    echo "                      Examples:"
+    echo "                        $0 test server --list-tests"
+    echo "                        $0 test server --filter-class \"*SignalRWorkflowTests\""
+    echo "                        $0 test server --filter-query \"/**/*/*/*[name~SignalRWorkflowTests]\""
+    echo "                        $0 test server -- --max-parallel-test-modules 1"
     echo "  deploy-test [host] [user]  Deploy plugin to production Test Jellyfin via SCP (default: root@192.168.2.192)"
     echo "  seed-config [url] [name] [otlp-url]   Write local plugin config XML from federation DB"
     echo "  seed-config-remote [host] [user] [url] [name] [otlp-url]"
@@ -775,6 +843,8 @@ case "${1:-}" in
     restart)     cmd_restart ;;
     server)      cmd_server ;;
     deploy)      cmd_deploy ;;
+    build)       cmd_build "${2:-all}" "${@:3}" ;;
+    test)        cmd_test "${2:-all}" "${@:3}" ;;
     deploy-test) cmd_deploy_test "${2:-}" "${3:-}" ;;
     seed-config) cmd_seed_config "${2:-}" "${3:-}" "${4:-}" ;;
     seed-config-remote) cmd_seed_config_remote "${2:-}" "${3:-}" "${4:-}" "${5:-}" "${6:-}" ;;
