@@ -19,6 +19,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0.x"
+          global-json-file: global.json
 
       - name: Get version from tag
         id: version

@@ -14,3 +14,7 @@ on:
 jobs:
   call:
     uses: jellyfin/jellyfin-meta-plugins/.github/workflows/test.yaml@master
+    with:
+      dotnet-version: |
+        9.0.x
+        10.0.x
