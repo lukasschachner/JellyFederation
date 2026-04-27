@@ -22,26 +22,46 @@
   "prCreation": "immediate",
   "prConcurrentLimit": 8,
   "prHourlyLimit": 2,
+  "automergeType": "pr",
+  "platformAutomerge": false,
   "packageRules": [
     {
       "matchManagers": [
         "nuget"
       ],
       "matchUpdateTypes": [
-        "patch",
+        "patch"
+      ],
+      "groupName": "nuget patch updates",
+      "automerge": true
+    },
+    {
+      "matchManagers": [
+        "nuget"
+      ],
+      "matchUpdateTypes": [
         "minor"
       ],
-      "groupName": "nuget non-major updates"
+      "groupName": "nuget minor updates"
     },
     {
       "matchManagers": [
         "npm"
       ],
       "matchUpdateTypes": [
-        "patch",
+        "patch"
+      ],
+      "groupName": "npm patch updates",
+      "automerge": true
+    },
+    {
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
         "minor"
       ],
-      "groupName": "npm non-major updates"
+      "groupName": "npm minor updates"
     },
     {
       "matchManagers": [
@@ -60,20 +80,25 @@
         "github-actions"
       ],
       "matchUpdateTypes": [
-        "patch",
-        "minor"
+        "patch"
       ],
-      "groupName": "github actions non-major updates"
+      "groupName": "github actions patch updates",
+      "automerge": true
     },
     {
       "matchManagers": [
         "github-actions"
       ],
       "matchUpdateTypes": [
-        "patch"
+        "minor"
       ],
-      "automerge": true,
-      "automergeType": "pr"
+      "groupName": "github actions minor updates"
+    },
+    {
+      "matchUpdateTypes": [
+        "lockFileMaintenance"
+      ],
+      "automerge": true
     },
     {
       "matchUpdateTypes": [
