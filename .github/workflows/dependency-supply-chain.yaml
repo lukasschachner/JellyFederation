@@ -19,7 +19,7 @@ jobs:
             9.0.x
             10.0.x
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "24.15.0"
           cache: npm
