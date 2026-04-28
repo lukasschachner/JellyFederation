@@ -23,7 +23,7 @@ jobs:
           dotnet-version: "10.0.x"
 
       - name: Restore
-        run: dotnet restore --solution JellyFederation.slnx
+        run: dotnet restore JellyFederation.slnx
 
       - name: Collect coverage (80% line gate)
         run: scripts/coverage.sh --min-line-coverage 80
