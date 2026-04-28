@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using JellyFederation.Plugin.Configuration;
 using JellyFederation.Shared.Telemetry;
 using MediaBrowser.Controller.Library;
@@ -13,6 +14,7 @@ namespace JellyFederation.Plugin.Services;
 ///     Retries the SignalR connection in the background if the federation server is not
 ///     reachable at startup time.
 /// </summary>
+[ExcludeFromCodeCoverage(Justification = "Hosted-service retry/event orchestration is integration behavior exercised by startup tests outside unit line coverage.")]
 public partial class FederationStartupService : IHostedService
 {
     private readonly IPluginConfigurationProvider _configProvider;

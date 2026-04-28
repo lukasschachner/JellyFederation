@@ -1,6 +1,10 @@
+using JellyFederation.Plugin;
 using JellyFederation.Plugin.Configuration;
+using JellyFederation.Plugin.Services;
 using JellyFederation.Shared.Models;
 using JellyFederation.Shared.Telemetry;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Xunit;
 
 namespace JellyFederation.Plugin.Tests;
@@ -149,6 +153,45 @@ public sealed class PluginComponentTests
 
         Assert.Contains("AddHostedService<TelemetryBootstrapService>", registrator);
         Assert.DoesNotContain("OpenTelemetry", pluginProject);
+    }
+
+    [Fact]
+    public void PluginServiceRegistrator_RegisterServices_AddsResolvableRuntimeDescriptors()
+    {
+        var services = new ServiceCollection();
+        var registrator = new PluginServiceRegistrator();
+
+        registrator.RegisterServices(services, applicationHost: null!);
+
+        Assert.Contains(services, d => d.ServiceType == typeof(IPluginConfigurationProvider));
+        Assert.Contains(services, d => d.ServiceType == typeof(HolePunchService) && d.Lifetime == ServiceLifetime.Singleton);
+        Assert.Contains(services, d => d.ServiceType == typeof(WebRtcTransportService) && d.Lifetime == ServiceLifetime.Singleton);
+        Assert.Contains(services, d => d.ServiceType == typeof(LocalStreamEndpoint) && d.Lifetime == ServiceLifetime.Singleton);
+        Assert.Contains(services, d => d.ServiceType == typeof(FederationSignalRService) && d.Lifetime == ServiceLifetime.Singleton);
+        Assert.Contains(services, d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(TelemetryBootstrapService));
+        Assert.Contains(services, d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(FederationStartupService));
+
+        using var provider = services.BuildServiceProvider();
+        var ex = Assert.Throws<InvalidOperationException>(() => provider.GetRequiredService<IPluginConfigurationProvider>());
+        Assert.Contains("FederationPlugin has not been instantiated", ex.Message);
+    }
+
+    [Fact]
+    public void PluginServiceRegistrator_RegistersRequiredRuntimeServices()
+    {
+        var registrator = File.ReadAllText(Path.Combine(
+            RepoRoot,
+            "src",
+            "JellyFederation.Plugin",
+            "PluginServiceRegistrator.cs"));
+
+        Assert.Contains("AddHttpClient<LibrarySyncService>", registrator);
+        Assert.Contains("AddSingleton<HolePunchService>", registrator);
+        Assert.Contains("AddSingleton<WebRtcTransportService>", registrator);
+        Assert.Contains("AddSingleton<LocalStreamEndpoint>", registrator);
+        Assert.Contains("AddHttpClient<FileTransferService>", registrator);
+        Assert.Contains("AddSingleton<FederationSignalRService>", registrator);
+        Assert.Contains("AddHostedService<FederationStartupService>", registrator);
     }
 
     [Fact]

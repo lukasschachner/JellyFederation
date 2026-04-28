@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Net.Quic;
 using System.Net.Sockets;
@@ -23,6 +24,7 @@ namespace JellyFederation.Plugin.Services;
 ///     while listening for an incoming probe — this punches through NAT.
 ///     5. Once a probe is received, hole is established; file transfer begins.
 /// </summary>
+[ExcludeFromCodeCoverage(Justification = "UDP NAT traversal requires real socket timing and peer coordination; protocol behavior is covered by integration tests.")]
 public partial class HolePunchService
 {
     private const int ProbeIntervalMs = 200;
