@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.IO.Pipelines;
+using System.Net;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -34,7 +35,8 @@ public sealed class LocalStreamEndpoint : IAsyncDisposable
         if (_app is not null) return;
 
         var builder = WebApplication.CreateSlimBuilder();
-        builder.WebHost.ConfigureKestrel(k => k.ListenLocalhost(0)); // port 0 = OS assigns
+        // Listen on IPv4 loopback only; ListenLocalhost(0) is not supported by Kestrel.
+        builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, 0)); // port 0 = OS assigns
         builder.Logging.ClearProviders(); // use Jellyfin's logging, not a second pipeline
 
         _app = builder.Build();

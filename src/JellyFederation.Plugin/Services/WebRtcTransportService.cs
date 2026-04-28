@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using JellyFederation.Plugin.Configuration;
 using JellyFederation.Shared.Diagnostics;
@@ -17,6 +18,7 @@ namespace JellyFederation.Plugin.Services;
 ///     Replaces the UDP hole-punch path when both peers advertise SupportsIce=true.
 ///     The existing HolePunchService is retained unchanged for backward-compat peers.
 /// </summary>
+[ExcludeFromCodeCoverage(Justification = "WebRTC negotiation depends on SIPSorcery peer connection callbacks and is covered by integration/manual transport tests rather than line coverage.")]
 public partial class WebRtcTransportService
 {
     private const int IceTimeoutMs = 30_000;

@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using System.Net.Quic;
 using System.Net.Security;
@@ -538,6 +539,7 @@ public partial class FileTransferService
         return OperationOutcome<FileInfo>.Success(fileInfo);
     }
 
+    [ExcludeFromCodeCoverage(Justification = "QUIC transport requires OS/runtime QUIC support and a live peer; exercised by transport integration tests.")]
     private async Task SendWithQuicAsync(
         FileInfo fileInfo,
         IPEndPoint remoteEp,
@@ -585,6 +587,7 @@ public partial class FileTransferService
         }
     }
 
+    [ExcludeFromCodeCoverage(Justification = "QUIC transport requires OS/runtime QUIC support and a live peer; exercised by transport integration tests.")]
     private async Task ReceiveWithQuicAsync(
         Guid fileRequestId,
         Socket holePunchSocket,
@@ -876,6 +879,7 @@ public partial class FileTransferService
     ///     Sends a file over an open WebRTC DataChannel.
     ///     Protocol: typed DataChannel frames: header JSON → binary chunks → end frame.
     /// </summary>
+    [ExcludeFromCodeCoverage(Justification = "WebRTC DataChannel transfer depends on SIPSorcery callbacks and is covered by transport integration tests.")]
     public async Task SendDataChannelAsync(
         Guid fileRequestId,
         string jellyfinItemId,
@@ -940,6 +944,7 @@ public partial class FileTransferService
     /// <summary>
     ///     Receives a file over an open WebRTC DataChannel and writes it to the download directory.
     /// </summary>
+    [ExcludeFromCodeCoverage(Justification = "WebRTC DataChannel transfer depends on SIPSorcery callbacks and is covered by transport integration tests.")]
     public async Task ReceiveDataChannelAsync(
         Guid fileRequestId,
         RTCDataChannel dc,
@@ -1285,6 +1290,7 @@ public partial class FileTransferService
     ///     The <see cref="PipeReader"/> end of the pipe; the caller passes this to
     ///     <see cref="LocalStreamEndpoint"/> to serve over HTTP.
     /// </returns>
+    [ExcludeFromCodeCoverage(Justification = "Streaming over WebRTC DataChannel depends on SIPSorcery callbacks and is covered by transport integration tests.")]
     public PipeReader ReceiveStreamingAsync(Guid fileRequestId, RTCDataChannel dc, CancellationToken ct)
     {
         using var scope = _logger.BeginScope(FederationLogScopes.ForFileRequest(

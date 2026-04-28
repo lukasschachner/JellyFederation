@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Threading.Channels;
 using JellyFederation.Shared.Dtos;
 using JellyFederation.Shared.Models;
@@ -167,6 +168,28 @@ public sealed class SignalRWorkflowTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ForwardIceSignal_DropsPayloadsLargerThanGuardLimit()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var (requester, owner) = await RegisterPairedServersAsync(cancellationToken);
+        var request = await _api.CreateFileRequestAsync(requester.ApiKey, owner.ServerId, "item-ice-oversize", cancellationToken);
+
+        await using var requesterConnection = CreateHubConnection(requester.ApiKey);
+        await using var ownerConnection = CreateHubConnection(owner.ApiKey);
+        var requesterSignals = new EventProbe<IceSignal>();
+        requesterConnection.On<IceSignal>("IceSignal", requesterSignals.Add);
+
+        await requesterConnection.StartAsync(cancellationToken);
+        await ownerConnection.StartAsync(cancellationToken);
+
+        var oversizedPayload = new string('x', 128 * 1024 + 1);
+        await Assert.ThrowsAnyAsync<Exception>(() => ownerConnection.InvokeAsync("ForwardIceSignal",
+            new IceSignal(request.Id, IceSignalType.Candidate, oversizedPayload), cancellationToken));
+
+        await requesterSignals.AssertNoMessageAsync(cancellationToken);
+    }
+
+    [Fact]
     public async Task RelayTransferStartIsForwardedOnlyFromAuthorizedSenderToReceiver()
     {
         var cancellationToken = TestContext.Current.CancellationToken;
@@ -197,6 +220,27 @@ public sealed class SignalRWorkflowTests : IAsyncLifetime
         Assert.Equal(request.Id, routedStart.FileRequestId);
         Assert.Equal(IceRole.Offerer, routedStart.Role);
         await ownerRelayStarts.AssertNoMessageAsync(cancellationToken);
+    }
+
+    [Fact]
+    public async Task ForwardRelayTransferStart_RequestNotFound_DoesNotForwardMessage()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var requester = await _api.RegisterAsync($"requester-{Guid.NewGuid():N}", "owner-a", cancellationToken);
+        var owner = await _api.RegisterAsync($"owner-{Guid.NewGuid():N}", "owner-b", cancellationToken);
+
+        await using var requesterConnection = CreateHubConnection(requester.ApiKey);
+        await using var ownerConnection = CreateHubConnection(owner.ApiKey);
+        var requesterRelayStarts = new EventProbe<RelayTransferStart>();
+        requesterConnection.On<RelayTransferStart>("RelayTransferStart", requesterRelayStarts.Add);
+
+        await requesterConnection.StartAsync(cancellationToken);
+        await ownerConnection.StartAsync(cancellationToken);
+
+        await ownerConnection.InvokeAsync("ForwardRelayTransferStart",
+            new RelayTransferStart(Guid.NewGuid(), IceRole.Offerer), cancellationToken);
+
+        await requesterRelayStarts.AssertNoMessageAsync(cancellationToken);
     }
 
     [Fact]
@@ -244,6 +288,191 @@ public sealed class SignalRWorkflowTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RelaySendChunk_DropsPayloadLargerThanGuardLimit()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var (requester, owner) = await RegisterPairedServersAsync(cancellationToken);
+        var request = await _api.CreateFileRequestAsync(requester.ApiKey, owner.ServerId, "item-relay-oversize",
+            cancellationToken);
+
+        await using var requesterConnection = CreateHubConnection(requester.ApiKey);
+        await using var ownerConnection = CreateHubConnection(owner.ApiKey);
+        var requesterChunks = new EventProbe<RelayChunk>();
+        requesterConnection.On<RelayChunk>("RelayReceiveChunk", requesterChunks.Add);
+
+        await requesterConnection.StartAsync(cancellationToken);
+        await ownerConnection.StartAsync(cancellationToken);
+
+        await ownerConnection.InvokeAsync("RelaySendChunk",
+            new RelayChunk(request.Id, ChunkIndex: 0, IsEof: false, Data: new byte[32 * 1024 + 1]), cancellationToken);
+
+        await requesterChunks.AssertNoMessageAsync(cancellationToken);
+    }
+
+    [Fact]
+    public async Task RelaySendChunk_RequestNotFound_DoesNotForward()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var requester = await _api.RegisterAsync($"requester-{Guid.NewGuid():N}", "owner-a", cancellationToken);
+        var owner = await _api.RegisterAsync($"owner-{Guid.NewGuid():N}", "owner-b", cancellationToken);
+
+        await using var requesterConnection = CreateHubConnection(requester.ApiKey);
+        await using var ownerConnection = CreateHubConnection(owner.ApiKey);
+        var requesterChunks = new EventProbe<RelayChunk>();
+        requesterConnection.On<RelayChunk>("RelayReceiveChunk", requesterChunks.Add);
+
+        await requesterConnection.StartAsync(cancellationToken);
+        await ownerConnection.StartAsync(cancellationToken);
+
+        await ownerConnection.InvokeAsync("RelaySendChunk",
+            new RelayChunk(Guid.NewGuid(), ChunkIndex: 0, IsEof: false, Data: [1, 2, 3]), cancellationToken);
+
+        await requesterChunks.AssertNoMessageAsync(cancellationToken);
+    }
+
+    [Fact]
+    public async Task ReportTransferProgress_RequestNotFound_DoesNotBroadcastToGroups()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var (requester, owner) = await RegisterPairedServersAsync(cancellationToken);
+
+        await using var requesterPlugin = CreateHubConnection(requester.ApiKey);
+        await using var requesterWeb = CreateHubConnection(requester.ApiKey, webClient: true);
+        await using var ownerWeb = CreateHubConnection(owner.ApiKey, webClient: true);
+        var requesterProgress = new EventProbe<TransferProgress>();
+        var ownerProgress = new EventProbe<TransferProgress>();
+        requesterWeb.On<TransferProgress>("TransferProgress", requesterProgress.Add);
+        ownerWeb.On<TransferProgress>("TransferProgress", ownerProgress.Add);
+
+        await requesterPlugin.StartAsync(cancellationToken);
+        await requesterWeb.StartAsync(cancellationToken);
+        await ownerWeb.StartAsync(cancellationToken);
+
+        await requesterPlugin.InvokeAsync("ReportTransferProgress",
+            new TransferProgress(Guid.NewGuid(), 10, 100), cancellationToken);
+
+        await requesterProgress.AssertNoMessageAsync(cancellationToken);
+        await ownerProgress.AssertNoMessageAsync(cancellationToken);
+    }
+
+    [Fact]
+    public async Task TransportSelection_PrefersQuicForLargeFiles_WhenBothPeersSupportQuic()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var (requester, owner) = await RegisterPairedServersAsync(cancellationToken);
+        const string jellyfinItemId = "item-quic-threshold";
+        await SyncOwnerItemAsync(owner.ApiKey, jellyfinItemId, fileSizeBytes: 5_000, cancellationToken);
+        var request = await _api.CreateFileRequestAsync(requester.ApiKey, owner.ServerId, jellyfinItemId, cancellationToken);
+
+        await using var requesterConnection = CreateHubConnection(requester.ApiKey);
+        await using var ownerConnection = CreateHubConnection(owner.ApiKey);
+        var requesterPunchRequests = new EventProbe<HolePunchRequest>();
+        var ownerPunchRequests = new EventProbe<HolePunchRequest>();
+        requesterConnection.On<HolePunchRequest>("HolePunchRequest", requesterPunchRequests.Add);
+        ownerConnection.On<HolePunchRequest>("HolePunchRequest", ownerPunchRequests.Add);
+
+        await requesterConnection.StartAsync(cancellationToken);
+        await ownerConnection.StartAsync(cancellationToken);
+
+        await ownerConnection.InvokeAsync(
+            "ReportHolePunchReady",
+            new HolePunchReady(request.Id, UdpPort: 41000, OverridePublicIp: "127.0.0.1", SupportsQuic: true,
+                LargeFileThresholdBytes: 4_000),
+            cancellationToken);
+        await requesterConnection.InvokeAsync(
+            "ReportHolePunchReady",
+            new HolePunchReady(request.Id, UdpPort: 41001, OverridePublicIp: "127.0.0.1", SupportsQuic: true,
+                LargeFileThresholdBytes: 4_000),
+            cancellationToken);
+
+        var ownerDispatch = await ownerPunchRequests.ReadAsync(cancellationToken);
+        var requesterDispatch = await requesterPunchRequests.ReadAsync(cancellationToken);
+
+        Assert.Equal(TransferTransportMode.Quic, ownerDispatch.SelectedTransportMode);
+        Assert.Equal(TransferSelectionReason.LargeFileQuic, ownerDispatch.TransportSelectionReason);
+        Assert.Equal(TransferTransportMode.Quic, requesterDispatch.SelectedTransportMode);
+        Assert.Equal(TransferSelectionReason.LargeFileQuic, requesterDispatch.TransportSelectionReason);
+    }
+
+    [Fact]
+    public async Task TransportSelection_FallsBackToArq_WhenAnyPeerDoesNotSupportQuic()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var (requester, owner) = await RegisterPairedServersAsync(cancellationToken);
+        const string jellyfinItemId = "item-arq-fallback";
+        await SyncOwnerItemAsync(owner.ApiKey, jellyfinItemId, fileSizeBytes: 9_000, cancellationToken);
+        var request = await _api.CreateFileRequestAsync(requester.ApiKey, owner.ServerId, jellyfinItemId, cancellationToken);
+
+        await using var requesterConnection = CreateHubConnection(requester.ApiKey);
+        await using var ownerConnection = CreateHubConnection(owner.ApiKey);
+        var requesterPunchRequests = new EventProbe<HolePunchRequest>();
+        requesterConnection.On<HolePunchRequest>("HolePunchRequest", requesterPunchRequests.Add);
+
+        await requesterConnection.StartAsync(cancellationToken);
+        await ownerConnection.StartAsync(cancellationToken);
+
+        await ownerConnection.InvokeAsync(
+            "ReportHolePunchReady",
+            new HolePunchReady(request.Id, UdpPort: 42000, OverridePublicIp: "127.0.0.1", SupportsQuic: false,
+                LargeFileThresholdBytes: 1_000),
+            cancellationToken);
+        await requesterConnection.InvokeAsync(
+            "ReportHolePunchReady",
+            new HolePunchReady(request.Id, UdpPort: 42001, OverridePublicIp: "127.0.0.1", SupportsQuic: true,
+                LargeFileThresholdBytes: 1_000),
+            cancellationToken);
+
+        var dispatch = await requesterPunchRequests.ReadAsync(cancellationToken);
+        Assert.Equal(TransferTransportMode.ArqUdp, dispatch.SelectedTransportMode);
+        Assert.Equal(TransferSelectionReason.QuicUnsupportedPeer, dispatch.TransportSelectionReason);
+    }
+
+    [Fact]
+    public async Task ReportHolePunchResult_FailureMarksRequestAsFailed()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var (requester, owner) = await RegisterPairedServersAsync(cancellationToken);
+        var request = await _api.CreateFileRequestAsync(requester.ApiKey, owner.ServerId, "item-hp-fail", cancellationToken);
+
+        await using var ownerConnection = CreateHubConnection(owner.ApiKey);
+        await ownerConnection.StartAsync(cancellationToken);
+
+        await ownerConnection.InvokeAsync(
+            "ReportHolePunchResult",
+            new HolePunchResult(
+                request.Id,
+                Success: false,
+                Error: "timeout",
+                Failure: FailureDescriptor.Timeout("holepunch.timeout", "Timed out")),
+            cancellationToken);
+
+        var updated = await GetRequestAsync(requester.ApiKey, request.Id, cancellationToken);
+        Assert.Equal(FileRequestStatus.Failed, updated.Status);
+        Assert.Equal(TransferFailureCategory.Connectivity, updated.FailureCategory);
+        Assert.Contains("Timed out", updated.FailureReason);
+    }
+
+    [Fact]
+    public async Task ReportHolePunchResult_FromNonParticipant_DoesNotMutateRequest()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var (requester, owner) = await RegisterPairedServersAsync(cancellationToken);
+        var unrelated = await _api.RegisterAsync($"unrelated-{Guid.NewGuid():N}", "owner-z", cancellationToken);
+        var request = await _api.CreateFileRequestAsync(requester.ApiKey, owner.ServerId, "item-hp-unauthorized", cancellationToken);
+
+        await using var unrelatedConnection = CreateHubConnection(unrelated.ApiKey);
+        await unrelatedConnection.StartAsync(cancellationToken);
+
+        await unrelatedConnection.InvokeAsync(
+            "ReportHolePunchResult",
+            new HolePunchResult(request.Id, Success: false, Error: "malicious"),
+            cancellationToken);
+
+        var unchanged = await GetRequestAsync(requester.ApiKey, request.Id, cancellationToken);
+        Assert.Equal(FileRequestStatus.Pending, unchanged.Status);
+    }
+
+    [Fact]
     public async Task TransferProgressIsVisibleToBothServerGroups()
     {
         var cancellationToken = TestContext.Current.CancellationToken;
@@ -273,10 +502,17 @@ public sealed class SignalRWorkflowTests : IAsyncLifetime
             await requesterPlugin.InvokeAsync("ReportTransferProgress", expectedProgress, cancellationToken);
 
             var bothUpdates = Task.WhenAll(requesterUpdateTask, ownerUpdateTask);
-            var completed = await Task.WhenAny(
-                bothUpdates,
-                Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken));
-            if (completed == bothUpdates)
+            var bothClientsObservedUpdate = true;
+            try
+            {
+                await bothUpdates.WaitAsync(TimeSpan.FromMilliseconds(100), cancellationToken);
+            }
+            catch (TimeoutException)
+            {
+                bothClientsObservedUpdate = false;
+            }
+
+            if (bothClientsObservedUpdate)
                 break;
         }
 
@@ -342,6 +578,45 @@ public sealed class SignalRWorkflowTests : IAsyncLifetime
             .Build();
     }
 
+    private async Task SyncOwnerItemAsync(string apiKey, string jellyfinItemId, long fileSizeBytes,
+        CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/library/sync")
+        {
+            Content = JsonContent.Create(new SyncMediaRequest([
+                new MediaItemSyncEntry(jellyfinItemId, jellyfinItemId, MediaType.Movie, 2024, null, null, fileSizeBytes)
+            ]))
+        };
+        request.Headers.Add("X-Api-Key", apiKey);
+
+        using var response = await _http.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+    }
+
+    private async Task<RequestSnapshot> GetRequestAsync(string apiKey, Guid requestId, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/api/filerequests");
+        request.Headers.Add("X-Api-Key", apiKey);
+        using var response = await _http.SendAsync(request, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        using var doc = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken),
+            cancellationToken: cancellationToken);
+        var element = doc.RootElement.EnumerateArray().Single(x => x.GetProperty("id").GetGuid() == requestId);
+
+        var status = Enum.Parse<FileRequestStatus>(element.GetProperty("status").GetString()!, ignoreCase: true);
+        var failureCategory = element.TryGetProperty("failureCategory", out var categoryElement) &&
+                              categoryElement.ValueKind == JsonValueKind.String
+            ? Enum.Parse<TransferFailureCategory>(categoryElement.GetString()!, ignoreCase: true)
+            : (TransferFailureCategory?)null;
+        var failureReason = element.TryGetProperty("failureReason", out var reasonElement) &&
+                            reasonElement.ValueKind == JsonValueKind.String
+            ? reasonElement.GetString()
+            : null;
+
+        return new RequestSnapshot(status, failureCategory, failureReason);
+    }
+
     private static async Task<T> ReadUntilAsync<T>(EventProbe<T> probe, Func<T, bool> predicate,
         CancellationToken cancellationToken)
     {
@@ -355,6 +630,11 @@ public sealed class SignalRWorkflowTests : IAsyncLifetime
                 return item;
         }
     }
+
+    private sealed record RequestSnapshot(
+        FileRequestStatus Status,
+        TransferFailureCategory? FailureCategory,
+        string? FailureReason);
 
     private sealed class EventProbe<T>
     {

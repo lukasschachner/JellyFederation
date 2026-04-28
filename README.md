@@ -62,6 +62,22 @@ Useful stack commands:
 ./dev.sh stack-down
 ```
 
+## Coverage
+
+Collect merged coverage for server + plugin tests:
+
+```bash
+scripts/coverage.sh
+```
+
+Outputs:
+- `coverage/index.html` (interactive report)
+- `coverage/Summary.txt`
+- `coverage/SummaryGithub.md`
+
+The script uses Microsoft Testing Platform coverage (`--coverage`, Cobertura format) and ReportGenerator.
+It enforces a default **80% total line coverage gate** (override locally with `--min-line-coverage <pct>`).
+
 For a media-request test flow:
 
 1. Start local observability/server stack with `./dev.sh stack-up`.

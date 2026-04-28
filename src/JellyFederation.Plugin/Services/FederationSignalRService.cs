@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using JellyFederation.Plugin.Configuration;
 using JellyFederation.Shared.Diagnostics;
 using JellyFederation.Shared.SignalR;
@@ -12,6 +13,7 @@ namespace JellyFederation.Plugin.Services;
 ///     Maintains the persistent SignalR connection to the federation server.
 ///     Dispatches incoming messages to the appropriate local services.
 /// </summary>
+[ExcludeFromCodeCoverage(Justification = "SignalR handler wiring requires a live HubConnection and is verified through integration workflow tests.")]
 public partial class FederationSignalRService : IAsyncDisposable
 {
     private readonly IPluginConfigurationProvider _configProvider;

@@ -22,7 +22,15 @@ Use `scripts/quality-gates.sh --dry-run` to print the commands without executing
 
 ## Additional checks
 
-When adding complex code or tests, consider coverage and CRAP analysis to identify high-risk untested paths.
+When adding complex code or tests, run coverage analysis and inspect high-risk untested paths:
+
+```bash
+scripts/coverage.sh
+```
+
+This collects MTP coverage (`Microsoft.Testing.Extensions.CodeCoverage`) in Cobertura format for both test projects, then generates merged HTML + text summaries under `coverage/`.
+
+A line-coverage gate is enforced at **80%** by default.
 
 ## Commit strategy
 
