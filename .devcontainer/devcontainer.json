@@ -1,0 +1,63 @@
+{
+  "name": "JellyFederation",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "devcontainer",
+  "workspaceFolder": "/workspaces/jellyfederation",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24"
+    },
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-dotnettools.csharp",
+        "ms-dotnettools.csdevkit",
+        "ms-azuretools.vscode-docker",
+        "EditorConfig.EditorConfig",
+        "GitHub.vscode-github-actions"
+      ]
+    }
+  },
+  "forwardPorts": [
+    5264,
+    5173,
+    5432,
+    8080,
+    3000,
+    4317,
+    4318
+  ],
+  "portsAttributes": {
+    "5264": {
+      "label": "JellyFederation Server"
+    },
+    "5173": {
+      "label": "JellyFederation Web (Vite)"
+    },
+    "5432": {
+      "label": "PostgreSQL"
+    },
+    "8080": {
+      "label": "Adminer"
+    },
+    "3000": {
+      "label": "Grafana LGTM"
+    },
+    "4317": {
+      "label": "OTLP gRPC"
+    },
+    "4318": {
+      "label": "OTLP HTTP"
+    }
+  },
+  "containerEnv": {
+    "Database__Provider": "PostgreSQL",
+    "ConnectionStrings__Default": "Host=postgres;Port=5432;Database=jellyfederation;Username=jellyfederation;Password=jellyfederation",
+    "Telemetry__OtlpEndpoint": "http://lgtm:4317"
+  },
+  "postCreateCommand": "dotnet restore JellyFederation.slnx && dotnet tool restore && cd src/JellyFederation.Web && npm ci",
+  "postStartCommand": "./scripts/devcontainer-post-start.sh",
+  "postAttachCommand": "printf '\\nPostgreSQL is available at Host=postgres;Database=jellyfederation;Username=jellyfederation;Password=jellyfederation inside the devcontainer, and localhost:5432 from the host.\\nRun: dotnet run --project src/JellyFederation.Server/JellyFederation.Server.csproj\\n'"
+}

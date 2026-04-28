@@ -22,6 +22,53 @@ testable increments.
 
 ## Local development
 
+### Devcontainer
+
+This repository includes a VS Code/devcontainer setup with .NET 10, Node.js 24,
+Docker CLI access, the PostgreSQL client, and PostgreSQL 17. Optional compose
+profiles add Adminer and the LGTM observability stack. The container waits for
+PostgreSQL and applies PostgreSQL EF Core migrations on start. Inside the container
+the server defaults to PostgreSQL via:
+
+```text
+Database__Provider=PostgreSQL
+ConnectionStrings__Default=Host=postgres;Port=5432;Database=jellyfederation;Username=jellyfederation;Password=jellyfederation
+```
+
+PostgreSQL is also published on `localhost:5432` for host tools. Optional Adminer
+is at `http://localhost:8080`, optional Grafana/LGTM is at `http://localhost:3000`,
+and optional OTLP is published on `localhost:4317`/`4318`.
+
+Start optional database UI / observability services with:
+
+```bash
+docker compose -f .devcontainer/docker-compose.yml --profile db-tools up -d
+docker compose -f .devcontainer/docker-compose.yml --profile observability up -d
+```
+
+Useful devcontainer database commands:
+
+```bash
+./scripts/devcontainer-reset-db.sh
+./scripts/devcontainer-seed-db.sh
+```
+
+Start the server inside the container with:
+
+```bash
+dotnet run --project src/JellyFederation.Server/JellyFederation.Server.csproj
+```
+
+An optional full-stack compose overlay is available for containerized server, web,
+and Jellyfin services:
+
+```bash
+docker compose \
+  -f .devcontainer/docker-compose.yml \
+  -f .devcontainer/docker-compose.full.yml \
+  --profile full-stack up --build
+```
+
 Use `./dev.sh` to build/deploy the plugin and run the local Jellyfin + federation stack.
 
 Sensible default refresh (no args):

@@ -12,10 +12,26 @@
     "npm",
     "dockerfile",
     "docker-compose",
-    "github-actions"
+    "github-actions",
+    "custom.regex"
   ],
   "labels": [
     "dependencies"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update .NET local tool versions in dotnet-tools.json",
+      "managerFilePatterns": [
+        "/(^|/)dotnet-tools\\.json$/",
+        "/(^|/)\\.config/dotnet-tools\\.json$/"
+      ],
+      "matchStrings": [
+        "\\\"(?<depName>[^\\\"]+)\\\"\\s*:\\s*\\{\\s*\\\"version\\\"\\s*:\\s*\\\"(?<currentValue>[^\\\"]+)\\\""
+      ],
+      "datasourceTemplate": "nuget",
+      "versioningTemplate": "nuget"
+    }
   ],
   "rangeStrategy": "bump",
   "rebaseWhen": "behind-base-branch",
