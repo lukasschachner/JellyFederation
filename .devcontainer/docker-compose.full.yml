@@ -1,0 +1,47 @@
+services:
+  jellyfederation-server:
+    profiles: ["full-stack"]
+    build:
+      context: ..
+      dockerfile: src/JellyFederation.Server/Dockerfile
+    environment:
+      Database__Provider: PostgreSQL
+      ConnectionStrings__Default: Host=postgres;Port=5432;Database=jellyfederation;Username=jellyfederation;Password=jellyfederation
+      Telemetry__OtlpEndpoint: http://lgtm:4317
+      Urls: http://0.0.0.0:5264
+    ports:
+      - "5264:5264"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      lgtm:
+        condition: service_started
+
+  jellyfederation-web:
+    profiles: ["full-stack"]
+    image: node:24.15.0-alpine@sha256:d1b3b4da11eefd5941e7f0b9cf17783fc99d9c6fc34884a665f40a06dbdfc94f
+    working_dir: /workspace/src/JellyFederation.Web
+    volumes:
+      - ..:/workspace:cached
+    command: sh -lc "npm ci && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    depends_on:
+      jellyfederation-server:
+        condition: service_started
+
+  jellyfin:
+    profiles: ["full-stack"]
+    image: jellyfin/jellyfin:10.11.0
+    restart: unless-stopped
+    ports:
+      - "8096:8096"
+    volumes:
+      - jellyfin-config:/config
+      - jellyfin-cache:/cache
+      - jellyfin-media:/media
+
+volumes:
+  jellyfin-config:
+  jellyfin-cache:
+  jellyfin-media:
