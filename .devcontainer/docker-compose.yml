@@ -16,7 +16,7 @@ services:
         condition: service_healthy
 
   postgres:
-    image: postgres:17-alpine@sha256:c7526c0f6c3f30260a563d7bcf8ad778effac59a44f8ffa86678c35418338609
+    image: postgres:17-alpine@sha256:979c4379dd698aba0b890599a6104e082035f98ef31d9b9291ec22f2b13059ca
     restart: unless-stopped
     environment:
       POSTGRES_DB: jellyfederation
@@ -34,7 +34,7 @@ services:
 
   adminer:
     profiles: ["db-tools", "full-stack"]
-    image: adminer:5-standalone@sha256:41898b976011fd87f2d3037366ad97f7d89fddfebc8aa8b3a7d77d0c465aa37b
+    image: adminer:5-standalone@sha256:af4b73ddc41b7f7bb5e614eef1f35ba998307be2c8d1c54bf4890e8b946c6e67
     restart: unless-stopped
     ports:
       - "8080:8080"
@@ -44,7 +44,7 @@ services:
 
   lgtm:
     profiles: ["observability", "full-stack"]
-    image: grafana/otel-lgtm:latest@sha256:764b657d5c750a151fbe2f9acd8cd8edeec873b8f5e3179380d7d08b69797c2e
+    image: grafana/otel-lgtm:latest@sha256:10f48eb2f8670134df542177bb19536c55421b089e43f9dfc2a27d4c078204d8
     restart: unless-stopped
     ports:
       - "3000:3000"
