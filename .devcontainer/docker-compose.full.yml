@@ -19,7 +19,7 @@ services:
 
   jellyfederation-web:
     profiles: ["full-stack"]
-    image: node:24.15.0-alpine@sha256:d1b3b4da11eefd5941e7f0b9cf17783fc99d9c6fc34884a665f40a06dbdfc94f
+    image: node:24.16.0-alpine@sha256:fb71d01345f11b708a3553c66e7c74074f2d506400ea81973343d915cb64eef0
     working_dir: /workspace/src/JellyFederation.Web
     volumes:
       - ..:/workspace:cached
@@ -32,7 +32,7 @@ services:
 
   jellyfin:
     profiles: ["full-stack"]
-    image: jellyfin/jellyfin:10.11.0@sha256:59417f441213e236a9f907d4e71a13472042409d85f9e9310dbdd87ee33d7bd4
+    image: jellyfin/jellyfin:10.11.11@sha256:aefb67e6a7ff1debdd154a78a7bbb780fd0c873d8639210a7f6a2016ad2b35db
     restart: unless-stopped
     ports:
       - "8096:8096"
