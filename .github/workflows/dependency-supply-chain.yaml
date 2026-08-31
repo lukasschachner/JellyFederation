@@ -21,7 +21,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: "24.16.0"
+          node-version: "24.20.0"
           cache: npm
           cache-dependency-path: src/JellyFederation.Web/package-lock.json
 
