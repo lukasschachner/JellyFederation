@@ -19,7 +19,7 @@ services:
 
   jellyfederation-web:
     profiles: ["full-stack"]
-    image: node:24.16.0-alpine@sha256:fb71d01345f11b708a3553c66e7c74074f2d506400ea81973343d915cb64eef0
+    image: node:24.20.0-alpine@sha256:e67514e5d0f6c46656005e1b693b2ec9d52e80b641307de684d4a015ba7a4eaf
     working_dir: /workspace/src/JellyFederation.Web
     volumes:
       - ..:/workspace:cached
