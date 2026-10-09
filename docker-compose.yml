@@ -1,6 +1,6 @@
 services:
   lgtm:
-    image: grafana/otel-lgtm:latest@sha256:10f48eb2f8670134df542177bb19536c55421b089e43f9dfc2a27d4c078204d8
+    image: grafana/otel-lgtm:latest@sha256:2de1094c593c671cbfca878a28ffcd7e46ff5e32f2ce966c0cf33003f6cf4266
     ports:
       - "3000:3000"   # Grafana
       - "4317:4317"   # OTLP gRPC
