@@ -18,7 +18,7 @@ jobs:
 
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: "9.0.318"
+          dotnet-version: "9.0.320"
           global-json-file: global.json
 
       - name: Get version from tag
